@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Studio · 图片生成工作台</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./workspace.css" />
+</head>
+
+<body class="preview-page">
+  <section id="loginPanel" class="login-shell preview-login-shell">
+    <div class="preview-login-card">
+      <div class="preview-login-visual" aria-hidden="true">
+        <div class="preview-login-orb preview-login-orb-one"></div>
+        <div class="preview-login-orb preview-login-orb-two"></div>
+        <div class="preview-login-art">
+          <span class="preview-logo-mark">AI</span>
+          <strong>Image Studio</strong>
+          <p>把想法变成清晰、可用的视觉作品。</p>
+        </div>
+      </div>
+
+      <div class="preview-login-form">
+        <div class="preview-eyebrow">Private workspace</div>
+        <h1>欢迎回来</h1>
+        <p class="app-subtitle">使用管理员已添加的邮箱进入图片生成工作台。</p>
+        <div class="field">
+          <label for="emailInput">邮箱地址</label>
+          <input id="emailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+        </div>
+        <button id="loginBtn" type="button">进入工作台</button>
+        <div id="loginStatus" class="status" aria-live="polite">等待输入邮箱。</div>
+      </div>
+    </div>
+  </section>
+
+  <header id="userBar" class="user-bar preview-topbar hidden">
+    <a class="preview-brand" href="#workspace" aria-label="图片生成工作台首页">
+      <span class="preview-brand-mark">AI</span>
+      <span>
+        <strong>Image Studio</strong>
+        <small>创作工作台</small>
+      </span>
+    </a>
+
+    <nav class="preview-nav" aria-label="主导航">
+      <button class="preview-nav-button is-active" type="button" data-preview-nav="workspace" aria-current="page">
+        <span aria-hidden="true">✦</span> 创作
+      </button>
+      <button class="preview-nav-button" type="button" data-preview-nav="library">
+        <span aria-hidden="true">▦</span> 作品库
+      </button>
+      <button id="adminToggleBtn" class="preview-nav-button hidden" type="button" data-preview-nav="admin">
+        <span aria-hidden="true">⌘</span> 管理
+      </button>
+    </nav>
+
+    <div class="preview-account">
+      <div class="preview-account-copy">
+        <strong id="currentUserEmail">未登录</strong>
+        <span id="currentUserBalance" class="mini-note">余额 ¥0.000</span>
+      </div>
+      <button id="logoutBtn" class="secondary compact" type="button">退出</button>
+    </div>
+  </header>
+
+  <main id="appShell" class="preview-app-shell hidden">
+    <section class="preview-view preview-workspace" data-preview-view="workspace" aria-labelledby="workspaceTitle">
+      <h1 id="workspaceTitle" class="sr-only" tabindex="-1">创作工作台</h1>
+
+      <aside class="preview-composer" aria-label="图片生成设置">
+        <div class="preview-composer-head">
+          <div>
+            <span class="preview-eyebrow">Create</span>
+            <h2>描述你的画面</h2>
+          </div>
+          <span class="preview-model-badge">API Market</span>
+        </div>
+
+        <div class="preview-composer-scroll">
+          <div class="field preview-model-field">
+            <label for="model">生成模式</label>
+            <select id="model">
+              <option value="gpt-image-2">快速低价版 · gpt-image-2</option>
+              <option value="gpt-image-2-official">官方完整版 · gpt-image-2-official</option>
+            </select>
+            <p id="modelNote" class="field-note hidden"></p>
+          </div>
+
+          <div class="field field-prompt preview-prompt-field">
+            <div class="label-row">
+              <label for="prompt">画面描述</label>
+              <span id="promptStats" class="mini-note">0 字</span>
+            </div>
+            <textarea id="prompt" placeholder="例如：极简科技产品海报，奶油白背景，柔和侧光，细腻材质，杂志级构图。"></textarea>
+          </div>
+
+          <section class="reference-card preview-reference-card" aria-labelledby="referenceTitle">
+            <div class="label-row">
+              <div>
+                <span class="preview-section-label" id="referenceTitle">参考图片</span>
+              </div>
+              <span id="referenceCount" class="mini-note">0/16 张</span>
+            </div>
+            <div class="reference-layout">
+              <div class="reference-controls">
+                <input id="referenceFileInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+                <div class="preview-reference-actions">
+                  <button id="referenceUploadBtn" class="secondary compact" type="button">＋ 添加图片</button>
+                  <button id="clearReferencesBtn" class="secondary compact" type="button">清空</button>
+                </div>
+                <div id="referenceStatus" class="status reference-status">PNG、JPEG、WebP；单张不超过 5MB，最多 16 张。</div>
+              </div>
+              <div id="referencePreviewGrid" class="input-preview-grid reference-preview-grid hidden"></div>
+            </div>
+          </section>
+
+          <div class="preview-quick-settings" aria-label="常用参数">
+            <div class="field">
+              <label for="aspectRatio">画面比例</label>
+              <select id="aspectRatio">
+                <option value="auto">auto</option>
+                <option value="1:1">1:1</option>
+                <option value="3:2">3:2</option>
+                <option value="2:3">2:3</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4</option>
+                <option value="5:4">5:4</option>
+                <option value="4:5">4:5</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="2:1">2:1</option>
+                <option value="1:2">1:2</option>
+                <option value="3:1">3:1</option>
+                <option value="1:3">1:3</option>
+                <option value="21:9">21:9</option>
+                <option value="9:21">9:21</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="resolution">清晰度</label>
+              <select id="resolution">
+                <option value="1k">1k</option>
+                <option value="2k">2k</option>
+                <option value="4k">4k</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="imageCount">生成张数</label>
+              <select id="imageCount">
+                <option value="1">1 张</option>
+                <option value="2">2 张</option>
+                <option value="3">3 张</option>
+                <option value="4">4 张</option>
+              </select>
+            </div>
+          </div>
+
+          <details id="advancedSettings" class="advanced-settings preview-advanced-settings">
+            <summary>
+              <span>更多设置</span>
+              <span id="advancedSummary" class="mini-note">1:1 · 1k · 1 张</span>
+            </summary>
+            <div class="advanced-grid">
+              <div id="officialSettings" class="settings-grid">
+                <div class="field">
+                  <label for="quality">质量</label>
+                  <select id="quality">
+                    <option value="low">草稿 low</option>
+                    <option value="medium">标准 medium</option>
+                    <option value="high">高清 high</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="outputFormat">输出格式</label>
+                  <select id="outputFormat">
+                    <option value="png">png</option>
+                    <option value="jpeg">jpeg</option>
+                    <option value="webp">webp</option>
+                  </select>
+                </div>
+
+                <div id="compressionField" class="field">
+                  <div class="label-row">
+                    <label for="outputCompression">压缩质量</label>
+                    <span id="compressionValue" class="mini-note">90</span>
+                  </div>
+                  <input id="outputCompression" type="range" min="0" max="100" value="90" />
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="preview-composer-footer">
+          <div id="priceCard" class="price-card" aria-live="polite">
+            <div class="price-topline">
+              <span>预计费用</span>
+              <strong id="priceTotal">¥0.000</strong>
+            </div>
+            <div id="priceDetail" class="price-detail">选择参数后显示估算价格。</div>
+            <div id="priceBalanceText" class="price-balance mini-note"></div>
+            <div id="priceWarning" class="price-warning hidden"></div>
+          </div>
+
+          <div class="actions preview-primary-actions">
+            <button id="runBtn" type="button">生成图片</button>
+            <button id="clearBtn" class="secondary" type="button">清空</button>
+          </div>
+          <div id="status" class="status" aria-live="polite">等待输入提示词。</div>
+        </div>
+      </aside>
+
+      <section class="preview-canvas" aria-labelledby="resultTitle">
+        <div class="preview-canvas-head">
+          <div>
+            <span class="preview-eyebrow">Canvas</span>
+            <h2 id="resultTitle" tabindex="-1">生成结果</h2>
+          </div>
+          <span id="resultSummary" class="chip">API Market</span>
+        </div>
+
+        <div id="progressPanel" class="progress-panel hidden" aria-live="polite">
+          <div class="progress-topline">
+            <span id="progressHint">通常 80~90 秒完成，高清或 4K 可能需要更久。</span>
+            <span><span class="sr-only">预计进度 </span><span id="progressPercent">0%</span></span>
+          </div>
+          <div id="progressTrack" class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <ol id="generationSteps" class="generation-steps" aria-label="生成进度">
+            <li data-step="validate">检查参数</li>
+            <li data-step="submit">提交任务</li>
+            <li data-step="queued">任务已创建</li>
+            <li data-step="poll">等待生成</li>
+            <li data-step="result">获取图片</li>
+            <li data-step="done">完成</li>
+          </ol>
+          <div id="progressElapsed" class="progress-elapsed">已用时 0 秒</div>
+        </div>
+
+        <div class="preview-canvas-body">
+          <div id="resultLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+          <div id="emptyState" class="empty-state preview-empty-state">
+            <div class="preview-empty-art" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <div>
+              <strong>从一段描述开始创作</strong>
+              <p>生成后的图片会在这里展示。你可以下载、复用参数，或继续作为参考图迭代。</p>
+            </div>
+          </div>
+
+          <div id="resultCard" class="result-card hidden">
+            <div id="resultGrid" class="result-grid"></div>
+            <div id="resultActions" class="result-actions hidden">
+              <button id="refreshCurrentTaskBtn" class="secondary compact hidden" type="button">刷新当前任务</button>
+              <button id="reuseResultPromptBtn" class="secondary compact" type="button">复用参数</button>
+              <button id="regenerateResultBtn" class="secondary compact" type="button">再次生成</button>
+              <button id="useAllResultsAsReferenceBtn" class="secondary compact" type="button">全部作为参考图</button>
+            </div>
+            <div class="result-meta">
+              <span id="taskIdText" class="mini-note hidden"></span>
+            </div>
+          </div>
+
+          <details id="debugDetails" class="debug-details hidden">
+            <summary>调试信息</summary>
+            <pre id="debugOutput"></pre>
+          </details>
+        </div>
+      </section>
+    </section>
+
+    <section class="preview-view preview-library" data-preview-view="library" aria-labelledby="libraryTitle" hidden>
+      <div class="preview-page-head">
+        <div>
+          <span class="preview-eyebrow">Library</span>
+          <h1 id="libraryTitle" tabindex="-1">我的作品库</h1>
+          <p>浏览最近生成的作品，复用参数，继续迭代。</p>
+        </div>
+        <button id="refreshMyLogsBtn" class="secondary" type="button">刷新作品</button>
+      </div>
+
+      <div class="preview-library-toolbar">
+        <label class="sr-only" for="historySearchInput">搜索作品</label>
+        <div class="preview-search-field">
+          <span aria-hidden="true">⌕</span>
+          <input id="historySearchInput" type="text" placeholder="搜索提示词、模型、Batch ID 或 Task ID" />
+        </div>
+        <label class="sr-only" for="historyFilterSelect">筛选作品</label>
+        <select id="historyFilterSelect">
+          <option value="all">全部记录</option>
+          <option value="completed">有图片</option>
+          <option value="failed">失败/需关注</option>
+          <option value="partial">部分完成</option>
+          <option value="active">执行中</option>
+          <option value="with-reference">使用过参考图</option>
+        </select>
+      </div>
+
+      <div class="preview-library-meta">最近 100 条记录 · 支持批次与子任务 ID 搜索</div>
+      <div id="myLogsList" class="log-list mini-note">暂无作品。</div>
+    </section>
+
+    <div class="preview-view preview-admin-view" data-preview-view="admin" hidden>
+      <section id="adminPanel" class="admin-shell hidden" aria-labelledby="adminTitle">
+        <div class="preview-page-head preview-admin-head">
+          <div>
+            <span class="preview-eyebrow">Admin</span>
+            <h1 id="adminTitle" tabindex="-1">用户与消费管理</h1>
+            <p>管理访问用户、余额与最近消费记录。</p>
+          </div>
+          <button id="adminRefreshBtn" class="secondary" type="button">刷新数据</button>
+        </div>
+
+        <div class="admin-grid preview-admin-grid">
+          <section class="admin-card preview-admin-create">
+            <div class="preview-section-heading">
+              <h2>添加用户</h2>
+              <p>创建可访问工作台的新账户。</p>
+            </div>
+            <div class="admin-form-grid">
+              <div class="field">
+                <label for="adminAddEmail">邮箱</label>
+                <input id="adminAddEmail" type="email" placeholder="user@example.com" />
+              </div>
+              <div class="field">
+                <label for="adminAddName">名称</label>
+                <input id="adminAddName" type="text" placeholder="可选" />
+              </div>
+              <div class="field">
+                <label for="adminAddBalance">初始余额 RMB</label>
+                <input id="adminAddBalance" type="number" step="0.00001" min="0" value="1" />
+              </div>
+            </div>
+            <button id="adminAddUserBtn" type="button">添加用户</button>
+            <div id="adminStatus" class="status" aria-live="polite">等待操作。</div>
+          </section>
+
+          <section class="admin-card preview-admin-users">
+            <div class="preview-section-heading">
+              <h2>用户列表</h2>
+              <p>编辑名称、启用状态和账户余额。</p>
+            </div>
+            <div class="table-wrap">
+              <table class="admin-table">
+                <caption class="sr-only">用户列表</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">邮箱</th>
+                    <th scope="col">名称</th>
+                    <th scope="col">余额</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">调额 RMB</th>
+                    <th scope="col">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="adminUsersBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="admin-card admin-card-wide preview-admin-logs">
+            <div class="preview-section-heading">
+              <h2>消费日志</h2>
+              <p>最近 100 条生成、结算和余额调整记录。</p>
+            </div>
+            <div class="table-wrap">
+              <table class="admin-table logs-table">
+                <caption class="sr-only">详细消费日志</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">时间</th>
+                    <th scope="col">邮箱</th>
+                    <th scope="col">类型/状态</th>
+                    <th scope="col">模型与参数</th>
+                    <th scope="col">Prompt / 原因</th>
+                    <th scope="col">费用</th>
+                    <th scope="col">余额变化</th>
+                    <th scope="col">Task ID</th>
+                  </tr>
+                </thead>
+                <tbody id="adminLogsBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="previewHistoryDialog" class="preview-history-dialog" aria-labelledby="previewHistoryDialogTitle">
+    <div class="preview-history-dialog-shell">
+      <header class="preview-history-dialog-head">
+        <div>
+          <span class="preview-eyebrow">Artwork details</span>
+          <h2 id="previewHistoryDialogTitle">作品详情</h2>
+          <p id="previewHistoryDialogSubtitle">查看图片、提示词、参数与任务信息。</p>
+        </div>
+        <button id="previewHistoryDialogClose" class="secondary compact preview-history-dialog-close" type="button" aria-label="关闭作品详情">关闭</button>
+      </header>
+
+      <div class="preview-history-dialog-body">
+        <section class="preview-history-detail-visual" aria-label="作品图片">
+          <div class="preview-history-detail-stage">
+            <img id="previewHistoryDetailImage" alt="" />
+            <div id="previewHistoryDetailEmpty" class="preview-history-detail-empty" hidden>这条记录暂无成功图片。</div>
+          </div>
+          <div class="preview-history-detail-gallery-row">
+            <div id="previewHistoryDetailGallery" class="preview-history-detail-gallery" aria-label="切换作品图片"></div>
+            <a id="previewHistoryOpenOriginal" class="button-link secondary compact" href="#" target="_blank" rel="noopener">打开原图</a>
+          </div>
+        </section>
+        <section id="previewHistoryDetailContent" class="preview-history-detail-content" aria-label="作品生成详情"></section>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="./config.example.js"></script>
+  <script src="./app/state.js"></script>
+  <script src="./app/dom.js"></script>
+  <script src="./app/utils.js"></script>
+  <script src="./app/pricing.js"></script>
+  <script src="./app/auth.js"></script>
+  <script src="./app/references.js"></script>
+  <script src="./app/generation.js"></script>
+  <script src="./app/results.js"></script>
+  <script src="./app/history.js"></script>
+  <script src="./app/admin.js"></script>
+  <script src="./app/main.js"></script>
+  <script src="./workspace-shell.js"></script>
+</body>
+
+</html>

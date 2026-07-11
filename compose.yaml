@@ -1,0 +1,22 @@
+name: image-generation
+
+services:
+  image-generation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    user: "${APP_UID:?set APP_UID to the verified data owner UID}:${APP_GID:?set APP_GID to the verified data owner GID}"
+    ports:
+      - "${APP_PORT:-8787}:8787"
+    # Application settings, including QUICK_BATCH_ENABLED, belong in runtime.env.
+    # Do not duplicate them under environment: Compose would override env_file values.
+    env_file:
+      - path: runtime.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /data
+    volumes:
+      - ./.data:/data

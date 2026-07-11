@@ -1,0 +1,14 @@
+{
+  "name": "image-generation-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "无第三方依赖的图片生成工作台",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node -e \"const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');const roots=['server.js','workspace-shell.js','lib','routes','app','config.example.js'];const files=[];function walk(p){const s=fs.statSync(p);if(s.isDirectory()){for(const n of fs.readdirSync(p))walk(path.join(p,n));}else if(p.endsWith('.js'))files.push(p);}for(const p of roots)walk(path.resolve(p));for(const f of files){const r=cp.spawnSync(process.execPath,['--check',f],{stdio:'inherit'});if(r.status!==0)process.exit(r.status??1);}console.log('Checked '+files.length+' JavaScript files.');\"",
+    "test": "node --test test/*.test.js"
+  }
+}
