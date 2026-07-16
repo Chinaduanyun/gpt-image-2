@@ -84,8 +84,24 @@ test('adaptive display changes precision without changing micros', () => {
   const ns = createPricingHarness();
   assert.equal(ns.formatAdaptiveMicros(300000), '¥0.300');
   assert.equal(ns.formatAdaptiveMicros(306000), '¥0.306');
-  assert.equal(ns.formatAdaptiveMicros(5978280), '¥5.98');
+  // 向零截断而非四舍五入：5978280 -> ¥5.97（旧四舍五入版本为 ¥5.98），避免显示虚高。
+  assert.equal(ns.formatAdaptiveMicros(5978280), '¥5.97');
   assert.equal(ns.estimatePrice().totalMicros, 306000);
+});
+
+test('adaptive display truncates toward zero instead of rounding up', () => {
+  const ns = createPricingHarness();
+  // ≥¥1 保留 2 位、截断
+  assert.equal(ns.formatAdaptiveMicros(1999999), '¥1.99');
+  assert.equal(ns.formatAdaptiveMicros(2000000), '¥2.00');
+  assert.equal(ns.formatAdaptiveMicros(1000000), '¥1.00');
+  // <¥1 保留 3 位、截断（不进位到 0.307）
+  assert.equal(ns.formatAdaptiveMicros(306999), '¥0.306');
+  assert.equal(ns.formatAdaptiveMicros(999999), '¥0.999');
+  assert.equal(ns.formatAdaptiveMicros(0), '¥0.000');
+  // 负数向零截断（余额调整为负时不夸大绝对值）
+  assert.equal(ns.formatAdaptiveMicros(-1999999), '¥-1.99');
+  assert.equal(ns.formatAdaptiveMicros(-500000), '¥-0.500');
 });
 
 test('missing selected model profile disables generation and reports configuration error', () => {

@@ -30,7 +30,16 @@
   ns.formatAdaptiveMicros = (micros) => {
     const value = Number(micros) || 0;
     const microsPerUnit = Number(ns.getPricingConfig().microsPerUnit) || 1000000;
-    return `¥${(value / microsPerUnit).toFixed(Math.abs(value) < microsPerUnit ? 3 : 2)}`;
+    // <¥1 显示 3 位、≥¥1 显示 2 位；向零截断而非四舍五入，避免余额/费用显示虚高
+    // （如 1999999 micros 显示 ¥1.99 而非 ¥2.00）。用整数运算避免浮点误差。
+    const precision = Math.abs(value) < microsPerUnit ? 3 : 2;
+    const scale = 10 ** precision;
+    const sign = value < 0 ? '-' : '';
+    const absValue = Math.abs(value);
+    const integerPart = Math.floor(absValue / microsPerUnit);
+    const remainderMicros = absValue - integerPart * microsPerUnit;
+    const fraction = Math.floor((remainderMicros * scale) / microsPerUnit);
+    return `¥${sign}${integerPart}.${String(fraction).padStart(precision, '0')}`;
   };
   ns.formatMicros = ns.formatAdaptiveMicros;
 
