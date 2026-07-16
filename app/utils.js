@@ -8,6 +8,22 @@
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString('zh-CN', { hour12: false });
   };
+  // 把任意错误值转成一句人话：字符串直用；对象取 .message/.error/.detail；再不行
+  // JSON.stringify 截断，避免 [object Object]。
+  ns.toErrorText = (value) => {
+    if (typeof value === 'string') return value;
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') {
+      const detail = value.message || value.error || value.detail;
+      if (typeof detail === 'string' && detail) return detail;
+      try {
+        const text = JSON.stringify(value);
+        if (text && text !== '{}' && text !== 'null') return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+      } catch {}
+      return '';
+    }
+    return String(value);
+  };
   // 仅允许把 http:/https: 或以 / 开头的同源相对路径放进 <a href>；拦截 javascript:、
   // data:、vbscript: 等可执行/可注入协议。协议相对地址 //host 按 http(s) 解析视为合法。
   ns.isSafeLinkUrl = (url) => {

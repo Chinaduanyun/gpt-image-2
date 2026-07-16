@@ -207,7 +207,7 @@
       taskId: child?.taskId || child?.task_id || '',
       imageUrl: child?.imageUrl || child?.image_url || child?.localImageUrl || urls[0] || '',
       imageUrls: urls,
-      error: child?.error?.message || child?.error || child?.message || '',
+      error: ns.toErrorText(child?.error) || ns.toErrorText(child?.message),
       billing: child?.billing || null
     };
   }

@@ -113,6 +113,7 @@ function generationHarness() {
     requestJson: async () => ({ ok: true, status: 200, json: {} }),
     saveStoredResult() {},
     renderResult() {},
+    toErrorText: (value) => typeof value === 'string' ? value : (value == null ? '' : (value.message || value.error || value.detail || '')),
     announceLive() {},
     setStatus() {},
     showDebug() {},
@@ -283,6 +284,30 @@ test('stale 401 responses cannot clear a newer account session', async () => {
   assert.equal(ns.state.session.token, 'new-token');
   assert.equal(ns.storedToken, 'new-token');
   assert.equal(ns.resetCount, undefined);
+});
+
+test('toErrorText renders any error value as human text, never [object Object]', () => {
+  const ns = {};
+  loadScript(ns, 'app/utils.js');
+  assert.equal(ns.toErrorText('boom'), 'boom');
+  assert.equal(ns.toErrorText({ message: '上游超时' }), '上游超时');
+  assert.equal(ns.toErrorText({ error: 'e' }), 'e');
+  assert.equal(ns.toErrorText({ detail: 'd' }), 'd');
+  assert.equal(ns.toErrorText(null), '');
+  assert.equal(ns.toErrorText(undefined), '');
+  assert.equal(ns.toErrorText({}), '');
+  const objText = ns.toErrorText({ code: 'E_UPSTREAM', reason: 'boom' });
+  assert.notEqual(objText, '[object Object]');
+  assert.match(objText, /E_UPSTREAM/);
+});
+
+test('batch normalization keeps object errors carrying a message readable', () => {
+  const { ns } = generationHarness();
+  const result = ns.normalizeBatchResult({
+    requestedCount: 1,
+    children: [{ index: 0, status: 'failed', error: { message: '上游超时' } }]
+  }, { settings: { model: 'gpt-image-2', n: 1 } });
+  assert.equal(result.children[0].error, '上游超时');
 });
 
 test('isSafeLinkUrl allows http(s) and same-origin relative paths, rejects script/data schemes', () => {

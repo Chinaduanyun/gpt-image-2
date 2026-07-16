@@ -61,7 +61,7 @@
     const title = document.createElement('strong');
     title.textContent = `第 ${index + 1} 张 · ${childStatusLabel(child)}`;
     const detail = document.createElement('p');
-    detail.textContent = child.error || (state === 'unknown'
+    detail.textContent = ns.toErrorText(child.error) || (state === 'unknown'
       ? '供应商可能已收到请求。系统不会自动重发或退款，请刷新当前任务。'
       : (state === 'error' ? '该子任务已明确失败，成功图片不受影响。' : '此位置会保留到任务返回结果。'));
     wrapper.append(title, detail);
