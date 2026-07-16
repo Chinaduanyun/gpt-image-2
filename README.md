@@ -14,6 +14,7 @@
 - API Market 当前文档明确说明：便宜渠道的规范模型名是 `gpt-image-2`，并兼容别名 `gpt-image-2-ext`，两者效果一致、可互换使用。2026-07-10 通过生产网络查询 `/v1/models` 时只列出了 `gpt-image-2` 和 `gpt-image-2-official`，因此本项目继续统一发送规范名 `gpt-image-2`，同时在服务端接受并规范化 `gpt-image-2-ext`；不能再把 `gpt-image-2-ext` 描述成“仅展示名称或不可请求”。
 - 便宜渠道价格的代码单位是美元 cost，而不是页面 Credits：1K/2K/4K 分别为 `0.0085`、`0.014`、`0.021` 美元；按总系数 36 对应用户价格 `¥0.306`、`¥0.504`、`¥0.756`。`0.085 Credits` 对应的是 `$0.0085`，不能在代码里误写成 `0.085`。
 - `gpt-image-2-official` 使用 45 个实际像素尺寸的 low/medium/high 精确价格表。合法页面组合必须有精确价格；供应商返回的实际 `data.cost` 仍是最终结算依据，`data.credits_cost` 仅作供应商 Credits 展示，不能代替美元 cost 参与本项目结算。
+- 结算时实际成本超过预扣、且余额不足以补齐时，差额记为该日志的 `balanceUnderpaidMicros`（欠费）。管理员通过 `POST /api/admin/users/:email/balance` 充值（`deltaMicros>0`）时，充值后会自动按 `createdAt` 从旧到新抵扣该用户所有未清 `balanceUnderpaidMicros`：能扣多少扣多少、余额不为负；被抵扣的日志记 `debtCollectedMicros`/`debtCollectedAt` 并把 `balanceUnderpaidMicros` 减到位，本次 `balance_adjustment` 日志记录 `collectedDebtMicros` 总额。此抵扣只搬动已欠金额、不改变任何计价数字或历史结算。
 - `gpt-image-2` 与 `gpt-image-2-official` 的服务端参数校验均接受 `n=1~4`。官方模型仍按一个上游多图任务提交；便宜渠道仅在 `QUICK_BATCH_ENABLED=true` 时把 `n>1` 拆成多个并发单图任务，默认关闭。批次成员都是普通 `type:'generation'` 消费记录，通过 `batchId`、`batchIndex`、`batchSize` 关联；每个成员独立保留 `n=1` 计价快照和每张 300000 micros 下限，批次 DTO 只在提交、批次查询和用户历史接口中临时合成。官方渠道还支持 `mask_url` 局部重绘，但当前产品没有提供该功能，不能把“上游支持”误写成“本项目已支持”。
 
 ## 快速批量行为与接口

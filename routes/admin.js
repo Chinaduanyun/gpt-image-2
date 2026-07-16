@@ -27,6 +27,34 @@ function resolveLedgerMicros(body, microsKey, usdKey) {
 
 const INVALID_AMOUNT_MESSAGE = '金额无效：必须是安全整数 micros，或可解析且不溢出的金额。';
 
+// After a positive top-up, apply the user's fresh balance to their outstanding
+// underpayment debts (log.balanceUnderpaidMicros produced by applyActualCostSettlement
+// when actual cost exceeded the prepaid amount), oldest createdAt first, collecting as
+// much as the balance allows without going negative. Marks each touched debt with
+// debtCollectedMicros / debtCollectedAt and reduces balanceUnderpaidMicros in place.
+// Returns the total collected.
+function collectUnderpaidDebt(data, email, collectedAt) {
+  const user = data.users[email];
+  if (!user) return 0;
+  const debts = data.spendLogs
+    .filter((log) => log.email === email && (Number(log.balanceUnderpaidMicros) || 0) > 0)
+    .sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''));
+  let collected = 0;
+  for (const log of debts) {
+    const available = Number(user.balanceMicros) || 0;
+    if (available <= 0) break;
+    const owed = Number(log.balanceUnderpaidMicros) || 0;
+    const take = Math.min(owed, available);
+    if (take <= 0) continue;
+    user.balanceMicros = available - take;
+    log.balanceUnderpaidMicros = owed - take;
+    log.debtCollectedMicros = (Number(log.debtCollectedMicros) || 0) + take;
+    log.debtCollectedAt = collectedAt;
+    collected += take;
+  }
+  return collected;
+}
+
 async function handleAdmin(req, res, pathname, url) {
   const data = loadDataStore();
   const auth = requireAdmin(req, data);
@@ -212,6 +240,8 @@ async function handleAdmin(req, res, pathname, url) {
 
       const before = Number(target.balanceMicros) || 0;
       target.balanceMicros = Math.max(0, before + deltaMicros);
+      // Recharges automatically settle the user's oldest outstanding underpayment debt.
+      const collectedDebtMicros = deltaMicros > 0 ? collectUnderpaidDebt(latestData, email, nowIso()) : 0;
       target.updatedAt = nowIso();
       latestData.spendLogs.push({
         id: createId('admin'),
@@ -222,6 +252,7 @@ async function handleAdmin(req, res, pathname, url) {
         reason: String(body.reason || '').trim(),
         balanceBeforeMicros: before,
         balanceAfterMicros: target.balanceMicros,
+        ...(collectedDebtMicros > 0 ? { collectedDebtMicros } : {}),
         createdAt: nowIso()
       });
       return { user: publicUser(target) };

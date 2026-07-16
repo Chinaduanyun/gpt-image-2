@@ -237,6 +237,44 @@ test('admin balance inputs reject non-safe-integer amounts without touching the 
   });
 });
 
+test('a positive top-up auto-collects outstanding underpayment debt oldest-first without going negative', { concurrency: false }, async () => {
+  await withDataDir(async () => {
+    const data = emptyStore();
+    data.users['admin@example.com'] = { email: 'admin@example.com', active: true, isAdmin: true, balanceMicros: 0 };
+    data.users['user@example.com'] = { email: 'user@example.com', active: true, balanceMicros: 0 };
+    data.sessions.adminToken = futureSession('admin@example.com');
+    data.spendLogs.push({
+      id: 'debt_old', type: 'generation', email: 'user@example.com', settled: true, status: 'completed',
+      balanceUnderpaidMicros: 100, createdAt: '2026-07-01T00:00:00.000Z'
+    });
+    data.spendLogs.push({
+      id: 'debt_new', type: 'generation', email: 'user@example.com', settled: true, status: 'completed',
+      balanceUnderpaidMicros: 200, createdAt: '2026-07-02T00:00:00.000Z'
+    });
+    saveDataStore(data);
+
+    const res = responseCapture();
+    const balancePath = '/api/admin/users/user%40example.com/balance';
+    await handleAdmin(request('POST', { deltaMicros: 250, reason: '充值' }, 'adminToken'), res, balancePath, new URL(`http://localhost${balancePath}`));
+    assert.equal(res.statusCode, 200);
+
+    const stored = loadDataStore();
+    // 250 credited, 100 clears the old debt, 150 partially clears the new debt; balance ends at 0.
+    assert.equal(stored.users['user@example.com'].balanceMicros, 0);
+    const oldDebt = stored.spendLogs.find((log) => log.id === 'debt_old');
+    const newDebt = stored.spendLogs.find((log) => log.id === 'debt_new');
+    assert.equal(oldDebt.balanceUnderpaidMicros, 0);
+    assert.equal(oldDebt.debtCollectedMicros, 100);
+    assert.match(oldDebt.debtCollectedAt, /^\d{4}-/);
+    assert.equal(newDebt.balanceUnderpaidMicros, 50);
+    assert.equal(newDebt.debtCollectedMicros, 150);
+    const adjustment = stored.spendLogs.find((log) => log.type === 'balance_adjustment');
+    assert.equal(adjustment.deltaMicros, 250);
+    assert.equal(adjustment.collectedDebtMicros, 250);
+    assert.equal(adjustment.balanceAfterMicros, 0);
+  });
+});
+
 test('admin refunds and closes only taskless submission_unknown logs once', { concurrency: false }, async () => {
   await withDataDir(async () => {
     const data = emptyStore();
