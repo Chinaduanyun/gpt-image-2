@@ -181,6 +181,62 @@ test('admin balance adjustment uses latest balance after concurrent billing', { 
 });
 
 
+test('admin PATCH direct balance overwrite records an auditable balance_adjustment', { concurrency: false }, async () => {
+  await withDataDir(async () => {
+    const data = emptyStore();
+    data.users['admin@example.com'] = { email: 'admin@example.com', active: true, isAdmin: true, balanceMicros: 0 };
+    data.users['user@example.com'] = { email: 'user@example.com', active: true, balanceMicros: 500 };
+    data.sessions.adminToken = futureSession('admin@example.com');
+    saveDataStore(data);
+
+    const res = responseCapture();
+    await handleAdmin(
+      request('PATCH', { balanceMicros: 2000 }, 'adminToken'),
+      res,
+      '/api/admin/users/user%40example.com',
+      new URL('http://localhost/api/admin/users/user%40example.com')
+    );
+    assert.equal(res.statusCode, 200);
+
+    const stored = loadDataStore();
+    assert.equal(stored.users['user@example.com'].balanceMicros, 2000);
+    const audit = stored.spendLogs.filter((log) => log.type === 'balance_adjustment');
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].reason, '管理员直接设置余额');
+    assert.equal(audit[0].email, 'user@example.com');
+    assert.equal(audit[0].adminEmail, 'admin@example.com');
+    assert.equal(audit[0].balanceBeforeMicros, 500);
+    assert.equal(audit[0].balanceAfterMicros, 2000);
+    assert.equal(audit[0].deltaMicros, 1500);
+  });
+});
+
+test('admin balance inputs reject non-safe-integer amounts without touching the ledger', { concurrency: false }, async () => {
+  await withDataDir(async () => {
+    const data = emptyStore();
+    data.users['admin@example.com'] = { email: 'admin@example.com', active: true, isAdmin: true, balanceMicros: 0 };
+    data.users['user@example.com'] = { email: 'user@example.com', active: true, balanceMicros: 500 };
+    data.sessions.adminToken = futureSession('admin@example.com');
+    saveDataStore(data);
+
+    const balancePath = '/api/admin/users/user%40example.com/balance';
+    for (const badBody of [{ deltaMicros: 'abc' }, { deltaMicros: 1.5 }, { deltaMicros: 9e18 }, { deltaMicros: {} }]) {
+      const res = responseCapture();
+      await handleAdmin(request('POST', badBody, 'adminToken'), res, balancePath, new URL(`http://localhost${balancePath}`));
+      assert.equal(res.statusCode, 400, JSON.stringify(badBody));
+    }
+
+    const patchPath = '/api/admin/users/user%40example.com';
+    const patchRes = responseCapture();
+    await handleAdmin(request('PATCH', { balanceMicros: 'oops' }, 'adminToken'), patchRes, patchPath, new URL(`http://localhost${patchPath}`));
+    assert.equal(patchRes.statusCode, 400);
+
+    const stored = loadDataStore();
+    assert.equal(stored.users['user@example.com'].balanceMicros, 500);
+    assert.equal(stored.spendLogs.length, 0);
+  });
+});
+
 test('admin refunds and closes only taskless submission_unknown logs once', { concurrency: false }, async () => {
   await withDataDir(async () => {
     const data = emptyStore();

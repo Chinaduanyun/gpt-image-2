@@ -7,6 +7,26 @@ const { parseMoneyToMicros } = require('../lib/pricing');
 const { refreshLogsFromUpstream, markStaleSubmittingUnknown, closeSubmissionUnknownWithRefund } = require('../lib/spend-logs');
 
 
+// Resolve a ledger amount from either the *Micros integer field or the *Usd field
+// (parsed via parseMoneyToMicros). Any amount that enters the ledger must be a safe
+// integer; NaN / Infinity / floats / oversized values are rejected instead of being
+// silently swallowed by `|| 0`. Returns { ok, micros, provided }.
+function resolveLedgerMicros(body, microsKey, usdKey) {
+  if (body[microsKey] !== undefined) {
+    const micros = Number(body[microsKey]);
+    if (!Number.isSafeInteger(micros)) return { ok: false };
+    return { ok: true, micros, provided: true };
+  }
+  if (body[usdKey] !== undefined) {
+    const micros = parseMoneyToMicros(body[usdKey]);
+    if (!Number.isSafeInteger(micros)) return { ok: false };
+    return { ok: true, micros, provided: true };
+  }
+  return { ok: true, micros: 0, provided: false };
+}
+
+const INVALID_AMOUNT_MESSAGE = '金额无效：必须是安全整数 micros，或可解析且不溢出的金额。';
+
 async function handleAdmin(req, res, pathname, url) {
   const data = loadDataStore();
   const auth = requireAdmin(req, data);
@@ -28,15 +48,18 @@ async function handleAdmin(req, res, pathname, url) {
       sendJson(res, 400, { error: { message: '请输入用户邮箱。' } });
       return;
     }
+    const initialBalance = resolveLedgerMicros(body, 'balanceMicros', 'balanceUsd');
+    if (!initialBalance.ok) {
+      sendJson(res, 400, { error: { message: INVALID_AMOUNT_MESSAGE } });
+      return;
+    }
     const result = await withDataStoreMutation((latestData) => {
       const latestAuth = requireAdmin(req, latestData);
       if (!latestAuth.ok) return { auth: latestAuth };
       if (latestData.users[email]) return { conflict: true };
 
       const timestamp = nowIso();
-      const balanceMicros = body.balanceMicros !== undefined
-        ? Math.max(0, Number(body.balanceMicros) || 0)
-        : Math.max(0, parseMoneyToMicros(body.balanceUsd));
+      const balanceMicros = Math.max(0, initialBalance.micros);
       latestData.users[email] = {
         email,
         name: String(body.name || '').trim(),
@@ -126,6 +149,11 @@ async function handleAdmin(req, res, pathname, url) {
   if (userMatch && !userMatch[2] && req.method === 'PATCH') {
     const email = normalizeEmail(decodePathPart(userMatch[1]));
     const body = await readJsonBody(req);
+    const balanceOverride = resolveLedgerMicros(body, 'balanceMicros', 'balanceUsd');
+    if (!balanceOverride.ok) {
+      sendJson(res, 400, { error: { message: INVALID_AMOUNT_MESSAGE } });
+      return;
+    }
     const result = await withDataStoreMutation((latestData) => {
       const latestAuth = requireAdmin(req, latestData);
       if (!latestAuth.ok) return { auth: latestAuth };
@@ -134,8 +162,24 @@ async function handleAdmin(req, res, pathname, url) {
 
       if (body.name !== undefined) target.name = String(body.name || '').trim();
       if (body.active !== undefined) target.active = body.active === true;
-      if (body.balanceMicros !== undefined) target.balanceMicros = Math.max(0, Number(body.balanceMicros) || 0);
-      if (body.balanceUsd !== undefined) target.balanceMicros = Math.max(0, parseMoneyToMicros(body.balanceUsd));
+      if (balanceOverride.provided) {
+        // Direct balance overwrite: record an auditable balance_adjustment so there is
+        // no traceless way to change the ledger.
+        const before = Number(target.balanceMicros) || 0;
+        const after = Math.max(0, balanceOverride.micros);
+        target.balanceMicros = after;
+        latestData.spendLogs.push({
+          id: createId('admin'),
+          type: 'balance_adjustment',
+          email,
+          adminEmail: latestAuth.email,
+          deltaMicros: after - before,
+          reason: '管理员直接设置余额',
+          balanceBeforeMicros: before,
+          balanceAfterMicros: after,
+          createdAt: nowIso()
+        });
+      }
       target.updatedAt = nowIso();
       return { user: publicUser(target) };
     });
@@ -154,7 +198,12 @@ async function handleAdmin(req, res, pathname, url) {
   if (userMatch && userMatch[2] === 'balance' && req.method === 'POST') {
     const email = normalizeEmail(decodePathPart(userMatch[1]));
     const body = await readJsonBody(req);
-    const deltaMicros = body.deltaMicros !== undefined ? Number(body.deltaMicros) || 0 : parseMoneyToMicros(body.deltaUsd);
+    const delta = resolveLedgerMicros(body, 'deltaMicros', 'deltaUsd');
+    if (!delta.ok) {
+      sendJson(res, 400, { error: { message: INVALID_AMOUNT_MESSAGE } });
+      return;
+    }
+    const deltaMicros = delta.micros;
     const result = await withDataStoreMutation((latestData) => {
       const latestAuth = requireAdmin(req, latestData);
       if (!latestAuth.ok) return { auth: latestAuth };
