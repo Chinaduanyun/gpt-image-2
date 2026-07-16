@@ -144,6 +144,7 @@
           <button class="secondary compact" type="button" data-history-action="reuse" data-log-id="${ns.escapeHtml(log.id)}">复用</button>
           <button class="secondary compact" type="button" data-history-action="regenerate" data-log-id="${ns.escapeHtml(log.id)}" ${status.group === 'active' || status.group === 'attention' ? 'disabled title="任务尚未安全结束"' : ''}>再生成</button>
           ${imageUrls.length ? `<button class="secondary compact" type="button" data-history-action="reference" data-log-id="${ns.escapeHtml(log.id)}">图片作参考</button>` : ''}
+          ${imageUrls.length ? `<button class="secondary compact" type="button" data-history-action="edit" data-log-id="${ns.escapeHtml(log.id)}">编辑此图</button>` : ''}
           ${imageUrls.length >= 2 ? `<button class="secondary compact" type="button" data-history-action="download-zip" data-log-id="${ns.escapeHtml(log.id)}">打包下载</button>` : ''}
           ${canDelete ? `<button class="secondary compact danger-button history-delete-btn" type="button" data-history-action="delete" data-log-id="${ns.escapeHtml(log.id)}">隐藏作品</button>` : `<button class="secondary compact history-delete-btn" type="button" disabled title="${ns.escapeHtml(deleteBlocker)}">不可隐藏</button>`}
         </div>` : '';
@@ -243,6 +244,12 @@
     if (!log) return;
     if (action === 'reuse') return applyHistoryLogToForm(log);
     if (action === 'reference') return ns.addReferenceUrls(log.imageUrls || [], '历史作品');
+    if (action === 'edit') {
+      // 一条记录可能有多张图，取第一张同源已归档（可编辑）的载入；都不可编辑则提示。
+      const editable = (Array.isArray(log.imageUrls) ? log.imageUrls : []).find((url) => ns.isEditableImageUrl?.(url));
+      if (!editable) return ns.setStatus('这条作品的图片未归档或跨域，暂不可编辑。', 'error');
+      return ns.startEditFromUrl(editable, 'stored');
+    }
     if (action === 'download-zip') return ns.downloadImagesAsZip(log.batchId || log.batch_id || log.taskId || log.task_id || log.id, log.imageUrls || []);
     if (action === 'regenerate') {
       if (ns.hasPendingGeneration()) return ns.setStatus('当前任务尚未安全结束，不能创建新的付费请求。请先刷新当前任务。', 'error');

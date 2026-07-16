@@ -151,7 +151,18 @@
       referenceBtn.type = 'button';
       referenceBtn.dataset.referenceUrl = child.imageUrl;
       referenceBtn.textContent = '作为参考图';
-      caption.append(copyBtn, referenceBtn);
+      // 「编辑此图」跳编辑 Tab；仅同源已归档图可编辑，跨域远程图会污染 canvas，置灰提示。
+      const editBtn = document.createElement('button');
+      editBtn.className = 'secondary compact';
+      editBtn.type = 'button';
+      editBtn.textContent = '编辑此图';
+      if (ns.isEditableImageUrl?.(child.imageUrl)) {
+        editBtn.dataset.editUrl = child.imageUrl;
+      } else {
+        editBtn.disabled = true;
+        editBtn.title = '该图未归档，暂不可编辑';
+      }
+      caption.append(copyBtn, referenceBtn, editBtn);
     } else {
       const status = document.createElement('span');
       status.className = 'slot-caption';
@@ -278,10 +289,11 @@
   };
 
   ns.handleResultAction = async (event) => {
-    const target = event.target?.closest('[data-copy-url], [data-reference-url], [data-retry-image], [data-refresh-current]');
+    const target = event.target?.closest('[data-copy-url], [data-reference-url], [data-retry-image], [data-refresh-current], [data-edit-url]');
     if (!target) return;
     if (target.dataset.copyUrl) return ns.copyImageLink(target.dataset.copyUrl);
     if (target.dataset.referenceUrl) return ns.addReferenceUrls([target.dataset.referenceUrl], '生成结果');
+    if (target.dataset.editUrl) return ns.startEditFromUrl(target.dataset.editUrl, 'stored');
     if (target.dataset.refreshCurrent) return ns.recoverPendingGeneration();
     if (target.dataset.retryImage) {
       const card = target.closest('.result-image-card');
