@@ -48,6 +48,12 @@
       if (parsed.origin === window.location.origin) {
         const dataUrl = await urlToDataUrl(parsed.toString());
         if (!isAccountContextCurrent(accountContext)) return false;
+        // 同源图片会被拉成本地 data URL 计入字节，前置对照 18MB 总量上限（与
+        // addReferenceFiles 同一口径、同一常量），超限即时中文报错而非等后端拒绝。
+        if (totalReferenceBytes() + dataUrl.bytes > ns.constants.MAX_REFERENCE_TOTAL_BYTES) {
+          ns.setReferenceStatus('本地参考图合计将超过 18MB 上限，未加入。', 'error');
+          return false;
+        }
         return ns.addReferenceImage({ type: 'file', value: dataUrl.value, name, bytes: dataUrl.bytes });
       }
     } catch {
