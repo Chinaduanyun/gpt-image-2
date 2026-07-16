@@ -56,6 +56,7 @@
       const id = event.target?.dataset?.referenceId;
       if (id) ns.removeReference(id);
     });
+    document.addEventListener('paste', ns.handleReferencePaste);
   };
 
   ns.loadPublicConfig = async () => {

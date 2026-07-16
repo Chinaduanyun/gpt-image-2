@@ -65,7 +65,8 @@ test('successful bootstrap enables generation after public config loads', async 
     setStatus() {}
   };
   const window = { ImageGen: ns };
-  vm.runInNewContext(fs.readFileSync(`${__dirname}/../app/main.js`, 'utf8'), { window });
+  // bindEvents 现在挂了一个 document 级的全局 paste 监听（剪贴板参考图），沙箱需提供 document。
+  vm.runInNewContext(fs.readFileSync(`${__dirname}/../app/main.js`, 'utf8'), { window, document: { addEventListener() {} } });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(busyStates, [false]);
   assert.equal(els.runBtn.disabled, false);

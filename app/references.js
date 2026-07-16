@@ -115,52 +115,101 @@
     if (!count) ns.setReferenceStatus('支持 PNG、JPEG、WebP；单张不超过 5MB，本地文件合计不超过 18MB，最多 16 张。');
   };
 
-  ns.addReferenceFiles = async () => {
+  // 校验+入库一批 File（本地选择或剪贴板粘贴共用），逐张套用格式/单张5MB/合计18MB/张数上限。
+  // 返回 { added, rejected, aborted }；aborted=true 表示中途账号切换，调用方应放弃后续渲染。
+  ns.addReferenceFileList = async (fileList) => {
     const accountContext = captureAccountContext();
-    const files = Array.from(ns.els.referenceFileInput.files || []);
-    if (!files.length) {
-      ns.setReferenceStatus('请选择本地参考图。', 'error');
-      return;
-    }
-
+    const files = Array.from(fileList || []);
     let added = 0;
     const rejected = [];
     for (const file of files) {
-      if (!isAccountContextCurrent(accountContext)) return;
+      if (!isAccountContextCurrent(accountContext)) return { added, rejected, aborted: true };
+      const label = file.name || '剪贴板图片';
       if (remainingSlots() <= 0) {
-        rejected.push(`${file.name}：超过 16 张数量上限`);
+        rejected.push(`${label}：超过 16 张数量上限`);
         continue;
       }
       if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-        rejected.push(`${file.name}：仅支持 PNG、JPEG、WebP`);
+        rejected.push(`${label}：仅支持 PNG、JPEG、WebP`);
         continue;
       }
       if (file.size > ns.constants.MAX_REFERENCE_IMAGE_BYTES) {
-        rejected.push(`${file.name}：单张超过 5MB`);
+        rejected.push(`${label}：单张超过 5MB`);
         continue;
       }
       if (totalReferenceBytes() + file.size > ns.constants.MAX_REFERENCE_TOTAL_BYTES) {
-        rejected.push(`${file.name}：本地文件合计将超过 18MB`);
+        rejected.push(`${label}：本地文件合计将超过 18MB`);
         continue;
       }
       try {
         const value = await fileToDataUrl(file);
-        if (!isAccountContextCurrent(accountContext)) return;
-        if (ns.addReferenceImage({ type: 'file', value, name: file.name, bytes: file.size })) added += 1;
+        if (!isAccountContextCurrent(accountContext)) return { added, rejected, aborted: true };
+        if (ns.addReferenceImage({ type: 'file', value, name: label, bytes: file.size })) added += 1;
       } catch {
-        rejected.push(`${file.name}：文件读取失败`);
+        rejected.push(`${label}：文件读取失败`);
       }
     }
+    return { added, rejected, aborted: false };
+  };
 
-    ns.els.referenceFileInput.value = '';
-    ns.renderReferences();
-    const summary = added ? `已添加 ${added} 张本地参考图。` : '未添加参考图。';
-    if (!rejected.length) return ns.setReferenceStatus(summary, added ? 'ok' : 'error');
+  function showReferenceRejections(summary, rejected, added) {
     ns.els.referenceStatus.className = `status reference-status ${added ? '' : 'error'}`.trim();
     ns.els.referenceStatus.setAttribute('role', 'alert');
     ns.els.referenceStatus.replaceChildren(document.createTextNode(`${summary} 以下文件被拒绝：`), Object.assign(document.createElement('ul'), {
       innerHTML: rejected.map((message) => `<li>${ns.escapeHtml(message)}</li>`).join('')
     }));
+  }
+
+  ns.addReferenceFiles = async () => {
+    const files = Array.from(ns.els.referenceFileInput.files || []);
+    if (!files.length) {
+      ns.setReferenceStatus('请选择本地参考图。', 'error');
+      return;
+    }
+    const { added, rejected, aborted } = await ns.addReferenceFileList(files);
+    if (aborted) return;
+    ns.els.referenceFileInput.value = '';
+    ns.renderReferences();
+    const summary = added ? `已添加 ${added} 张本地参考图。` : '未添加参考图。';
+    if (!rejected.length) return ns.setReferenceStatus(summary, added ? 'ok' : 'error');
+    showReferenceRejections(summary, rejected, added);
+  };
+
+  // 从剪贴板事件里挑出图片文件（优先 files，回退 items[kind=file]），仅取 image/*。
+  function clipboardImageFiles(clipboard) {
+    if (!clipboard) return [];
+    const files = [];
+    for (const file of Array.from(clipboard.files || [])) {
+      if (file && /^image\//.test(file.type)) files.push(file);
+    }
+    if (!files.length && clipboard.items) {
+      for (const item of Array.from(clipboard.items)) {
+        if (item.kind === 'file' && /^image\//.test(item.type)) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+    }
+    return files;
+  }
+
+  // 全局粘贴：剪贴板含图片就走参考图管线；纯文本粘贴不拦截（不 preventDefault），
+  // 因此“文本框内既有文本又有图片”时文本照常粘贴、图片另入参考图。登录前忽略；
+  // 生成中/待恢复（参考图上传被锁）时忽略。
+  ns.handleReferencePaste = async (event) => {
+    if (!ns.state.session?.token) return;
+    if (ns.els.referenceFileInput?.disabled) return;
+    const files = clipboardImageFiles(event.clipboardData || window.clipboardData);
+    if (!files.length) return;
+    const { added, rejected, aborted } = await ns.addReferenceFileList(files);
+    if (aborted) return;
+    ns.renderReferences();
+    if (added) ns.setStatus(`已从剪贴板添加 ${added} 张参考图。`, 'ok');
+    if (rejected.length) {
+      showReferenceRejections(added ? `已从剪贴板添加 ${added} 张参考图。` : '剪贴板图片未能添加。', rejected, added);
+    } else if (!added) {
+      ns.setReferenceStatus('剪贴板图片未能添加。', 'error');
+    }
   };
 
   ns.removeReference = (id) => {
