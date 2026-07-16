@@ -14,6 +14,7 @@
     ns.updateAdvancedSummary();
     ns.resetProgress();
     ns.renderReferences();
+    ns.renderNotifyToggle();
   };
 
   ns.bindEvents = () => {
@@ -57,6 +58,7 @@
       if (id) ns.removeReference(id);
     });
     document.addEventListener('paste', ns.handleReferencePaste);
+    ns.els.notifyToggle?.addEventListener('change', ns.handleNotifyToggle);
   };
 
   ns.loadPublicConfig = async () => {

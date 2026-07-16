@@ -60,6 +60,7 @@ test('successful bootstrap enables generation after public config loads', async 
     updateAdvancedSummary() {},
     resetProgress() {},
     renderReferences() {},
+    renderNotifyToggle() {},
     setBusy(value) { busyStates.push(value); els.runBtn.disabled = value; },
     restoreSession: async () => {},
     setStatus() {}

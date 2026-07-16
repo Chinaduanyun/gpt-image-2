@@ -6,6 +6,76 @@
   const BATCH_TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'success', 'partial_success', 'partial', 'failed', 'cancelled', 'error']);
   const UNKNOWN_STATUSES = new Set(['submission_unknown', 'attention_required', 'unknown']);
 
+  // ---- 任务完成浏览器通知 ----
+  // Notification 不存在（老 webview）时开关隐藏；权限仅在用户主动开启时才请求；
+  // 偏好按账号隔离存 localStorage（沿用 userStorageKey）。
+  ns.notificationsSupported = () => typeof window !== 'undefined' && 'Notification' in window;
+  ns.notifyStorageKey = () => ns.userStorageKey?.('imageGenNotify') || '';
+  ns.isNotifyEnabled = () => {
+    const key = ns.notifyStorageKey();
+    return Boolean(key && window.localStorage.getItem(key) === '1');
+  };
+  ns.setNotifyPref = (enabled) => {
+    const key = ns.notifyStorageKey();
+    if (!key) return;
+    if (enabled) window.localStorage.setItem(key, '1');
+    else window.localStorage.removeItem(key);
+  };
+  ns.renderNotifyToggle = () => {
+    const field = ns.els?.notifyToggleField;
+    const toggle = ns.els?.notifyToggle;
+    if (!field || !toggle) return;
+    if (!ns.notificationsSupported()) {
+      field.classList.add('hidden');
+      return;
+    }
+    field.classList.remove('hidden');
+    const denied = window.Notification.permission === 'denied';
+    toggle.checked = ns.isNotifyEnabled() && !denied;
+    toggle.disabled = denied;
+    field.classList.toggle('is-disabled', denied);
+    field.title = denied ? '浏览器已拒绝通知权限，请在站点设置中允许后再开启。' : '';
+  };
+  ns.handleNotifyToggle = async () => {
+    const toggle = ns.els?.notifyToggle;
+    if (!toggle || !ns.notificationsSupported()) return;
+    if (!toggle.checked) {
+      ns.setNotifyPref(false);
+      ns.renderNotifyToggle();
+      return;
+    }
+    let permission = window.Notification.permission;
+    if (permission === 'default') {
+      try { permission = await window.Notification.requestPermission(); } catch { permission = window.Notification.permission; }
+    }
+    if (permission === 'granted') {
+      ns.setNotifyPref(true);
+      ns.setStatus('已开启：任务到达终态且页面在后台时会发送浏览器通知。', 'ok');
+    } else {
+      ns.setNotifyPref(false);
+      if (permission === 'denied') ns.setStatus('通知权限被拒绝，请在浏览器站点设置中允许后再开启。', 'error');
+    }
+    ns.renderNotifyToggle();
+  };
+  let lastNotifiedKey = '';
+  ns.resetNotifyDedup = () => { lastNotifiedKey = ''; };
+  // 仅在偏好开启、权限 granted、页面不可见(document.hidden)时发通知；同一终态只发一次。
+  ns.notifyGenerationComplete = (result, summary) => {
+    if (!ns.notificationsSupported() || !ns.isNotifyEnabled()) return;
+    if (window.Notification.permission !== 'granted') return;
+    if (typeof document === 'undefined' || !document.hidden) return;
+    const id = `${result?.batchId || result?.taskId || 'result'}:${result?.status || ''}`;
+    if (id === lastNotifiedKey) return;
+    lastNotifiedKey = id;
+    try {
+      const notification = new window.Notification('图片生成完成', { body: summary, tag: id });
+      notification.onclick = () => {
+        try { window.focus(); } catch {}
+        notification.close();
+      };
+    } catch {}
+  };
+
   ns.getProgressConfig = () => ({
     expectedDurationMs: Number(ns.state.publicConfig?.progress?.expectedDurationMs) || 85000,
     softCapPercent: Number(ns.state.publicConfig?.progress?.softCapPercent) || 90,
@@ -409,6 +479,7 @@
       ns.els.progressPanel.className = 'progress-panel error';
       ns.els.progressHint.textContent = '部分子任务状态未知，需要继续刷新或人工确认；不会自动重发或退款。';
       ns.setStatus('批次需要关注：状态未知的子任务不会自动重发，以避免重复计费。', 'error');
+      ns.notifyGenerationComplete(result, `批次需要关注：${result.counts?.unknown || 0} 张子任务状态未知。`);
       return;
     }
     await ns.clearPendingRequestSafely(pending.ownerEmail);
@@ -433,6 +504,11 @@
       ns.failProgress();
       ns.setStatus('生成失败，请查看错误信息或作品库记录。', 'error');
     }
+    const counts = result.counts || {};
+    const notifyBody = result.kind === 'batch'
+      ? `批次结束：${counts.succeeded || 0}/${result.requestedCount} 张成功${counts.failed ? `，${counts.failed} 失败` : ''}${counts.unknown ? `，${counts.unknown} 未知` : ''}。`
+      : (SUCCESS_STATUSES.has(result.status) && result.imageUrls.length ? `已生成 ${result.imageUrls.length} 张图片。` : '生成失败，请查看错误信息。');
+    ns.notifyGenerationComplete(result, notifyBody);
   }
 
   async function pollPending(pending, operationToken, initialDelayMs = 0) {

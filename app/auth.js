@@ -166,6 +166,7 @@
   };
   ns.resetAccountRuntime = () => {
     ns.state.accountEpoch += 1;
+    ns.resetNotifyDedup?.();
     ns.state.pollController?.abort();
     ns.state.submitController?.abort();
     ns.state.pollController = null;
@@ -195,6 +196,8 @@
       ns.els.currentUserBalance.textContent = `余额 ${ns.formatMicros(ns.state.session.user.balanceMicros)}`;
       ns.updatePriceEstimate?.();
     }
+    // 完成通知开关的偏好按账号隔离，登录/切换/恢复会话后按当前账号回显。
+    ns.renderNotifyToggle?.();
   };
   ns.isAccountContextCurrent = (epoch, token, ownerEmail = '') => Boolean(
     epoch === ns.state.accountEpoch &&
