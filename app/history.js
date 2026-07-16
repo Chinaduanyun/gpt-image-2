@@ -95,7 +95,7 @@
         <ol>
           ${children.map((child, index) => {
             const state = ns.classifyLogStatus(child.status);
-            const error = child.error?.message || child.error || child.message || '';
+            const error = ns.toErrorText(child.error) || ns.toErrorText(child.message);
             return `<li><span>第 ${Number(child.index ?? index) + 1} 张</span><strong class="history-child-status ${state.className}">${ns.escapeHtml(state.label)}</strong>${child.taskId || child.task_id ? `<code>${ns.escapeHtml(child.taskId || child.task_id)}</code>` : ''}${error ? `<p>${ns.escapeHtml(error)}</p>` : ''}</li>`;
           }).join('')}
         </ol>

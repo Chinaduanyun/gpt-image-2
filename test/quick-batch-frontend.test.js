@@ -376,6 +376,7 @@ test('history renders child order and only offers tombstone action for terminal 
     formatDate: () => 'date',
     escapeHtml: (value) => String(value ?? ''),
     isSafeLinkUrl: (url) => { const t = String(url ?? '').trim(); return t ? ((t.startsWith('/') && !t.startsWith('//')) || /^https?:/i.test(t)) : false; },
+    toErrorText: (value) => (typeof value === 'string' ? value : (value == null ? '' : (value.message || value.error || value.detail || JSON.stringify(value)))),
     setStatus() {},
     hasPendingGeneration: () => false
   };
@@ -386,7 +387,7 @@ test('history renders child order and only offers tombstone action for terminal 
       model: 'gpt-image-2', settings: { n: 3 }, estimatedCostMicros: 918000, chargedMicros: 600000,
       aggregateBilling: { settled: true, actualCostMicros: 600000 },
       children: [
-        { index: 2, status: 'failed', taskId: 'task_2', billing: { settled: true } },
+        { index: 2, status: 'failed', taskId: 'task_2', error: { detail: '内容审核未通过' }, billing: { settled: true } },
         { index: 0, status: 'completed', taskId: 'task_0', billing: { settled: true } },
         { index: 1, status: 'completed', taskId: 'task_1', billing: { settled: true } }
       ],
@@ -407,6 +408,8 @@ test('history renders child order and only offers tombstone action for terminal 
   assert.match(html, /2\/3 成功 · 1 失败/);
   assert.ok(html.indexOf('task_0') < html.indexOf('task_1'));
   assert.ok(html.indexOf('task_1') < html.indexOf('task_2'));
+  assert.match(html, /内容审核未通过/);
+  assert.ok(!html.includes('[object Object]'));
   assert.match(html, /data-history-action="delete" data-log-id="settled"/);
   assert.match(html, /提交未确认，已退款并关闭/);
   assert.match(html, /data-history-action="delete" data-log-id="refunded-closed"/);
