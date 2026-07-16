@@ -174,21 +174,7 @@
     return billing.settled === true && Number.isSafeInteger(billing.actualCostMicros) && billing.actualCostMicros >= 0 ? billing.actualCostMicros : null;
   };
 
-  function canonicalize(value) {
-    if (Array.isArray(value)) return value.map(canonicalize);
-    if (!value || typeof value !== 'object') return value;
-    return Object.keys(value).sort().reduce((output, key) => {
-      output[key] = canonicalize(value[key]);
-      return output;
-    }, {});
-  }
   ns.createIdempotencyKey = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
-  ns.createPayloadHash = async (settings) => {
-    const text = JSON.stringify(canonicalize(settings));
-    if (!globalThis.crypto?.subtle) return text;
-    const bytes = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  };
   ns.submitGeneration = (settings, idempotencyKey, signal) => ns.requestJson('/api/api-market/v1/images/generations', {
     method: 'POST',
     signal,
@@ -532,9 +518,8 @@
     const ownerEmail = ns.state.session?.user?.email || '';
     const accountEpoch = ns.state.accountEpoch;
     const sessionToken = ns.state.session?.token;
-    const payloadHash = await ns.createPayloadHash(settings);
     if (accountEpoch !== ns.state.accountEpoch || sessionToken !== ns.state.session?.token || ownerEmail !== ns.state.session?.user?.email) return;
-    const pending = { idempotencyKey, payloadHash, settings, requestedCount: settings.n, kind: '', batchId: '', taskId: '', ownerEmail, createdAt: new Date().toISOString() };
+    const pending = { idempotencyKey, settings, requestedCount: settings.n, kind: '', batchId: '', taskId: '', ownerEmail, createdAt: new Date().toISOString() };
     operationToken = ns.createIdempotencyKey();
     ns.state.activeOperationToken = operationToken;
     const submitController = new AbortController();
