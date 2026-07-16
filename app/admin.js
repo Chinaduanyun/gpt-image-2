@@ -58,7 +58,7 @@
       button.disabled = false;
       return ns.setAdminStatus(ns.getErrorMessage(result, '退款并关闭失败。请刷新记录后重试。'), 'error');
     }
-    ns.setAdminStatus(`已退款 ${ns.formatMicros(result.json.refundMicros)} 并关闭记录；未删除或重试任务。`, 'ok');
+    ns.setAdminStatus(`已退款 ${ns.formatMicros(result.json?.refundMicros)} 并关闭记录；未删除或重试任务。`, 'ok');
     await ns.loadAdminData();
   };
   ns.loadAdminData = async () => {
@@ -75,10 +75,10 @@
         ns.requestJson('/api/admin/spend-logs?limit=100')
       ]);
       if (epoch !== ns.state.accountEpoch || token !== ns.state.session?.token) return;
-      if (usersResult.ok) ns.renderAdminUsers(usersResult.json.users || []);
+      if (usersResult.ok) ns.renderAdminUsers(usersResult.json?.users || []);
       else ns.els.adminUsersBody.innerHTML = `<tr><td colspan="6">${ns.escapeHtml(ns.getErrorMessage(usersResult, '用户列表加载失败，请重试。'))}</td></tr>`;
       if (logsResult.ok) {
-        ns.state.adminLogs = logsResult.json.logs || [];
+        ns.state.adminLogs = logsResult.json?.logs || [];
         ns.renderAdminLogs(ns.state.adminLogs);
       }
       else ns.els.adminLogsBody.innerHTML = `<tr><td colspan="9">${ns.escapeHtml(ns.getErrorMessage(logsResult, '消费日志加载失败，请重试。'))}</td></tr>`;

@@ -207,7 +207,9 @@
     const epoch = ns.state.accountEpoch;
     const token = ns.state.session?.token;
     const result = await ns.requestJson('/api/me');
-    if (!result.ok || !ns.isAccountContextCurrent(epoch, token)) return false;
+    // 网关偶发返回非 JSON 的 200 时 result.json 为 null，取 .user 会抛异常并把
+    // 已成功的生成误报为失败。缺 user 一律按加载失败处理。
+    if (!result.ok || !result.json?.user || !ns.isAccountContextCurrent(epoch, token)) return false;
     ns.state.session.user = result.json.user;
     ns.renderAuthState();
     return true;
@@ -224,6 +226,7 @@
       const result = await ns.requestJson('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ email }) });
       if (attemptId !== ns.state.loginAttemptId) return;
       if (!result.ok) return ns.setLoginStatus(ns.getErrorMessage(result, `登录失败：HTTP ${result.status}`), 'error');
+      if (!result.json?.token || !result.json?.user) return ns.setLoginStatus('登录响应无效（网关未返回有效数据），请稍后重试。', 'error');
       ns.resetAccountRuntime();
       ns.state.session = { token: result.json.token, user: result.json.user };
       ns.storeSession(result.json.token, result.json.user);

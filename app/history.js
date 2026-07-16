@@ -196,7 +196,7 @@
         ns.els.myLogsList.innerHTML = `<div class="list-state is-error">${ns.escapeHtml(ns.getErrorMessage(result, '作品库加载失败。'))}<button class="secondary compact" type="button" data-history-action="retry-load">重试</button></div>`;
         return;
       }
-      ns.renderMyLogs(result.json.logs || []);
+      ns.renderMyLogs(result.json?.logs || []);
     } catch (error) {
       ns.els.myLogsList.innerHTML = `<div class="list-state is-error">作品库加载失败：${ns.escapeHtml(error?.message || error)}<button class="secondary compact" type="button" data-history-action="retry-load">重试</button></div>`;
     } finally {
