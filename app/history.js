@@ -217,9 +217,15 @@
     await ns.loadMyLogs();
   };
 
+  let historySearchTimer = null;
   ns.handleHistorySearch = () => {
-    ns.state.historySearch = ns.els.historySearchInput?.value || '';
-    ns.renderMyLogs();
+    if (historySearchTimer) window.clearTimeout(historySearchTimer);
+    // 输入防抖 ~250ms，避免每敲一个字就整列表重渲染。
+    historySearchTimer = window.setTimeout(() => {
+      historySearchTimer = null;
+      ns.state.historySearch = ns.els.historySearchInput?.value || '';
+      ns.renderMyLogs();
+    }, 250);
   };
   ns.handleHistoryFilter = () => {
     ns.state.historyFilter = ns.els.historyFilterSelect?.value || 'all';
