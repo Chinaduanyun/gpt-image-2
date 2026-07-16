@@ -588,8 +588,6 @@
       pending.batchId = ns.extractBatchId(json);
       pending.taskId = ns.extractTaskId(json);
       pending.status = ns.getTaskStatus(json);
-      ns.state.activeBatchId = pending.batchId;
-      ns.state.activeTaskId = pending.taskId;
       await ns.savePendingRequest(pending, pending.ownerEmail);
       if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
       await ns.loadMe();

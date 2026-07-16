@@ -173,8 +173,6 @@
     ns.stopProgress?.();
     ns.state.isBusy = false;
     ns.state.pendingRequest = null;
-    ns.state.activeTaskId = '';
-    ns.state.activeBatchId = '';
     ns.state.activeOperationToken = '';
     ns.state.result = null;
     ns.state.myLogs = [];

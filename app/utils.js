@@ -1,9 +1,6 @@
 (() => {
   const ns = window.ImageGen = window.ImageGen || {};
 
-  ns.sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-  ns.formatMicros = (micros) => `¥${((Number(micros) || 0) / (Number(ns.state.publicConfig?.pricing?.microsPerUnit) || 1000000)).toFixed(5)}`;
-  ns.formatPrice = (value) => `¥${Number(value || 0).toFixed(5)}`;
   ns.parseUsdInput = (value) => Math.round((Number(value) || 0) * (Number(ns.state.publicConfig?.pricing?.microsPerUnit) || 1000000));
   ns.formatDate = (value) => {
     if (!value) return '-';

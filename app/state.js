@@ -28,8 +28,6 @@
     currentGenerationStep: '',
     isBusy: false,
     publicConfig: null,
-    activeTaskId: '',
-    activeBatchId: '',
     pendingRequest: null,
     pollController: null,
     lastLiveAnnouncement: '',
