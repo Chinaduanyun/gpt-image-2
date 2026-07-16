@@ -1771,6 +1771,22 @@
   .preview-history-detail-content {
     overflow: visible;
   }
+
+  /* 触屏聚焦字号 <16px 的表单控件时 iOS Safari 会自动放大页面：
+     快速参数下拉(比例/清晰度/张数)在此宽度是主流程控件，统一 16px 消除缩放。 */
+  .preview-quick-settings select {
+    font-size: 16px;
+  }
+
+  /* 管理表格输入同样避免 iOS 聚焦缩放，并把输入/操作按钮点击目标抬到 ≥40px。 */
+  .preview-page .admin-table input {
+    font-size: 16px;
+    min-height: 40px;
+  }
+
+  .preview-page .table-actions button {
+    min-height: 40px;
+  }
 }
 
 @media (max-width: 680px) {
