@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { MIME_TYPES, ROOT } = require('../lib/constants');
@@ -50,7 +51,15 @@ function serveStatic(req, res, pathname) {
       return;
     }
     const contentType = MIME_TYPES[path.extname(filePath)] || 'application/octet-stream';
-    send(res, 200, req.method === 'HEAD' ? undefined : data, contentType);
+    const etag = `"${crypto.createHash('sha1').update(data).digest('hex')}"`;
+    // no-cache forces revalidation on every request, so a redeploy takes effect
+    // immediately; the ETag lets an unchanged file answer with a cheap 304.
+    const headers = { 'Cache-Control': 'no-cache', ETag: etag };
+    if (req.headers && req.headers['if-none-match'] === etag) {
+      send(res, 304, undefined, contentType, headers);
+      return;
+    }
+    send(res, 200, req.method === 'HEAD' ? undefined : data, contentType, headers);
   });
 }
 

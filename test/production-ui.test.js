@@ -31,20 +31,20 @@ function selectValues(id) {
   return [...match[1].matchAll(/<option\b[^>]*\bvalue=["']([^"']+)["'][^>]*>/gi)].map((option) => option[1]);
 }
 
-function staticResponse(method, pathname) {
+function staticResponse(method, pathname, headers = {}) {
   return new Promise((resolve) => {
     const result = { statusCode: 0, headers: {}, body: undefined };
     const res = {
-      writeHead(statusCode, headers) {
+      writeHead(statusCode, responseHeaders) {
         result.statusCode = statusCode;
-        result.headers = headers;
+        result.headers = responseHeaders;
       },
       end(body) {
         result.body = body;
         resolve(result);
       }
     };
-    serveStatic({ method }, res, pathname);
+    serveStatic({ method, headers }, res, pathname);
   });
 }
 
@@ -279,13 +279,20 @@ test('production assets are exact-allowlisted while preview and private paths ar
   assert.equal(getStaticPath('/../runtime.env'), null);
 });
 
-test('production static responses use correct MIME, no-store and method handling', async () => {
+test('production static responses use correct MIME, no-cache/ETag and method handling', async () => {
   for (const pathname of ['/', '/index.html']) {
     const page = await staticResponse('GET', pathname);
     assert.equal(page.statusCode, 200);
     assert.equal(page.headers['Content-Type'], 'text/html; charset=utf-8');
-    assert.equal(page.headers['Cache-Control'], 'no-store');
+    assert.equal(page.headers['Cache-Control'], 'no-cache');
+    assert.match(page.headers.ETag, /^"[0-9a-f]{40}"$/);
     assert.match(page.body.toString('utf8'), /Image Studio · 图片生成工作台/);
+
+    // A matching If-None-Match revalidates to a bodyless 304.
+    const revalidated = await staticResponse('GET', pathname, { 'if-none-match': page.headers.ETag });
+    assert.equal(revalidated.statusCode, 304);
+    assert.equal(revalidated.body, undefined);
+    assert.equal(revalidated.headers.ETag, page.headers.ETag);
   }
 
   const css = await staticResponse('GET', '/workspace.css');
