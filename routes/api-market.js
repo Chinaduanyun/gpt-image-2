@@ -370,10 +370,6 @@ function existingGenerationsByClientRequest(data, email, clientRequestId) {
   return data.spendLogs.filter((log) => log.type === 'generation' && log.email === email && (log.clientRequestId === clientRequestId || log.idempotencyKey === clientRequestId));
 }
 
-function existingGenerationByIdempotency(data, email, key) {
-  return existingGenerationsByClientRequest(data, email, key)[0] || null;
-}
-
 function existingRequestResult(existing, requestHash) {
   if (!existing.length) return null;
   if (existing.some((log) => (log.requestHash || log.payloadHash) !== requestHash)) return { conflict: true };
@@ -611,16 +607,16 @@ async function handleTask(req, res, pathname, config) {
     return;
   }
   const decodedTaskId = decodePathPart(taskIdPart);
-  const location = findTaskLocation(data, decodedTaskId);
-  if (!location) {
+  const taskLog = findTaskLocation(data, decodedTaskId);
+  if (!taskLog) {
     sendJson(res, 404, { error: { message: '任务不存在。' } });
     return;
   }
-  if (!auth.user.isAdmin && location.log.email !== auth.email) {
+  if (!auth.user.isAdmin && taskLog.email !== auth.email) {
     sendJson(res, 403, { error: { message: '不能查询其他用户的任务。' } });
     return;
   }
-  const nextRefreshAt = Date.parse(location.log.nextRefreshAt || '');
+  const nextRefreshAt = Date.parse(taskLog.nextRefreshAt || '');
   if (Number.isFinite(nextRefreshAt) && nextRefreshAt > Date.now()) {
     const retrySeconds = Math.max(1, Math.ceil((nextRefreshAt - Date.now()) / 1000));
     if (!isResponseWritable(res)) return;
@@ -754,7 +750,6 @@ module.exports = {
   slimSubmitResponse,
   taskDto,
   existingGenerationsByClientRequest,
-  existingGenerationByIdempotency,
   handleGeneration,
   handleTask,
   handleBatch,

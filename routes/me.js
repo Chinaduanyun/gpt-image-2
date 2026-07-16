@@ -42,6 +42,15 @@ function getRefreshLogsForHistoryItems(data, items) {
   return logs;
 }
 
+// Resolve the generation logs a DELETE targets: a standalone generation by id, or all
+// members of the batch (whether logId is a batch member's id or the batchId itself).
+function collectDeletableGenerationLogs(data, email, logId) {
+  const direct = data.spendLogs.find((entry) => entry.id === logId && entry.email === email && entry.type === 'generation');
+  if (direct && !direct.batchId) return [direct];
+  const batchId = direct?.batchId || logId;
+  return data.spendLogs.filter((entry) => entry.type === 'generation' && entry.email === email && entry.batchId === batchId);
+}
+
 async function handleMe(req, res, pathname, url) {
   const data = loadDataStore();
   const auth = requireSession(req, data);
@@ -75,11 +84,7 @@ async function handleMe(req, res, pathname, url) {
       const latestAuth = requireSession(req, latestData);
       if (!latestAuth.ok) return { auth: latestAuth };
 
-      const direct = latestData.spendLogs.find((entry) => entry.id === logId && entry.email === latestAuth.email && entry.type === 'generation');
-      const batchId = direct?.batchId || logId;
-      const logs = direct?.batchId
-        ? latestData.spendLogs.filter((entry) => entry.type === 'generation' && entry.email === latestAuth.email && entry.batchId === batchId)
-        : (direct ? [direct] : latestData.spendLogs.filter((entry) => entry.type === 'generation' && entry.email === latestAuth.email && entry.batchId === batchId));
+      const logs = collectDeletableGenerationLogs(latestData, latestAuth.email, logId);
       if (!logs.length) return { notFound: true };
       if (logs.every((log) => log.hiddenFromHistory === true && log.cleanupStatus === 'cleanupComplete')) return { alreadyComplete: true };
       if (logs.some((log) => log.settled !== true || !TERMINAL_GENERATION_STATUSES.has(String(log.status || '').toLowerCase()))) {
@@ -119,11 +124,7 @@ async function handleMe(req, res, pathname, url) {
     await withDataStoreMutation((latestData) => {
       const latestAuth = requireSession(req, latestData);
       if (!latestAuth.ok) return;
-      const direct = latestData.spendLogs.find((entry) => entry.id === logId && entry.email === latestAuth.email && entry.type === 'generation');
-      const batchId = direct?.batchId || logId;
-      const logs = direct?.batchId
-        ? latestData.spendLogs.filter((entry) => entry.type === 'generation' && entry.email === latestAuth.email && entry.batchId === batchId)
-        : (direct ? [direct] : latestData.spendLogs.filter((entry) => entry.type === 'generation' && entry.email === latestAuth.email && entry.batchId === batchId));
+      const logs = collectDeletableGenerationLogs(latestData, latestAuth.email, logId);
       const timestamp = new Date().toISOString();
       for (const log of logs) {
         if (log.hiddenFromHistory === true) {

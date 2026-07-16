@@ -15,7 +15,6 @@ const { estimateGenerationCostMicros } = require('../lib/pricing');
 const {
   findTaskLocation,
   applyTaskJsonToLog,
-  flattenGenerationLogs,
   logNeedsRefresh,
   mergeArchivedImages,
   refreshLogsFromUpstream
@@ -308,9 +307,9 @@ test('child traversal, settlement and aggregate billing keep a per-child floor a
     log.taskId = `child_task_${index}`;
   });
 
-  assert.equal(flattenGenerationLogs(logs).length, 4);
-  assert.equal(findTaskLocation(data, 'child_task_2').log.batchIndex, 2);
-  assert.equal(findTaskLocation(data, 'child_task_2').parent, null);
+  assert.equal(logs.length, 4);
+  assert.equal(findTaskLocation(data, 'child_task_2').batchIndex, 2);
+  assert.equal(findTaskLocation(data, 'missing_task'), null);
 
   applyTaskJsonToLog(data, logs[2], { data: { status: 'failed' } });
   for (const index of [0, 1, 3]) {
