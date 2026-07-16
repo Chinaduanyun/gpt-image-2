@@ -103,10 +103,13 @@
   }
   function renderHistoryImages(imageUrls) {
     if (!imageUrls.length) return '<div class="history-empty">暂无成功图片</div>';
-    return `<div class="history-images">${imageUrls.map((url, index) => `
-      <a class="history-thumb" href="${ns.escapeHtml(url)}" target="_blank" rel="noopener" title="打开图片 ${index + 1}">
-        <img src="${ns.escapeHtml(url)}" alt="历史图片 ${index + 1}" loading="lazy" decoding="async" onerror="this.closest('.history-thumb').classList.add('has-image-error');this.alt='历史图片加载失败'" />
-      </a>`).join('')}</div>`;
+    return `<div class="history-images">${imageUrls.map((url, index) => {
+      const img = `<img src="${ns.escapeHtml(url)}" alt="历史图片 ${index + 1}" loading="lazy" decoding="async" onerror="this.closest('.history-thumb').classList.add('has-image-error');this.alt='历史图片加载失败'" />`;
+      // URL 协议不合法时不渲染链接，只显示图片，避免把不可信协议放进 href。
+      return ns.isSafeLinkUrl(url)
+        ? `<a class="history-thumb" href="${ns.escapeHtml(url)}" target="_blank" rel="noopener" title="打开图片 ${index + 1}">${img}</a>`
+        : `<div class="history-thumb">${img}</div>`;
+    }).join('')}</div>`;
   }
 
   ns.renderMyLogs = (logs = null) => {

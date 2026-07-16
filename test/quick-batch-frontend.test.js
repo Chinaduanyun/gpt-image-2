@@ -285,6 +285,20 @@ test('stale 401 responses cannot clear a newer account session', async () => {
   assert.equal(ns.resetCount, undefined);
 });
 
+test('isSafeLinkUrl allows http(s) and same-origin relative paths, rejects script/data schemes', () => {
+  const ns = {};
+  loadScript(ns, 'app/utils.js');
+  assert.equal(ns.isSafeLinkUrl('/images/a.png'), true);
+  assert.equal(ns.isSafeLinkUrl('https://cdn.example.com/a.png'), true);
+  assert.equal(ns.isSafeLinkUrl('http://example.com/a.png'), true);
+  assert.equal(ns.isSafeLinkUrl('javascript:alert(1)'), false);
+  assert.equal(ns.isSafeLinkUrl('data:image/png;base64,AAAA'), false);
+  assert.equal(ns.isSafeLinkUrl('vbscript:msgbox(1)'), false);
+  assert.equal(ns.isSafeLinkUrl('  '), false);
+  assert.equal(ns.isSafeLinkUrl(''), false);
+  assert.equal(ns.isSafeLinkUrl(null), false);
+});
+
 test('only the latest concurrent login attempt can activate a session', async () => {
   const pending = [];
   const ns = {
@@ -336,6 +350,7 @@ test('history renders child order and only offers tombstone action for terminal 
     formatMicros: (value) => `micros:${value}`,
     formatDate: () => 'date',
     escapeHtml: (value) => String(value ?? ''),
+    isSafeLinkUrl: (url) => { const t = String(url ?? '').trim(); return t ? ((t.startsWith('/') && !t.startsWith('//')) || /^https?:/i.test(t)) : false; },
     setStatus() {},
     hasPendingGeneration: () => false
   };

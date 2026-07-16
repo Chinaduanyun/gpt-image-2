@@ -94,13 +94,16 @@
       retry.className = 'secondary compact';
       retry.dataset.retryImage = child.imageUrl;
       retry.textContent = '重试加载';
-      const open = document.createElement('a');
-      open.className = 'button-link secondary compact';
-      open.href = child.imageUrl;
-      open.target = '_blank';
-      open.rel = 'noopener';
-      open.textContent = '打开原图';
-      actions.append(retry, open);
+      actions.append(retry);
+      if (ns.isSafeLinkUrl(child.imageUrl)) {
+        const open = document.createElement('a');
+        open.className = 'button-link secondary compact';
+        open.href = child.imageUrl;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        open.textContent = '打开原图';
+        actions.append(open);
+      }
       fallback.append(actions);
       thumb.append(fallback);
     }, { once: true });
@@ -123,17 +126,21 @@
     const caption = document.createElement('figcaption');
     caption.className = 'result-meta image-actions';
     if (child.imageUrl) {
-      const openLink = document.createElement('a');
-      openLink.className = 'button-link secondary compact';
-      openLink.href = child.imageUrl;
-      openLink.target = '_blank';
-      openLink.rel = 'noopener';
-      openLink.textContent = `打开原图 ${index + 1}`;
-      const downloadLink = document.createElement('a');
-      downloadLink.className = 'button-link secondary compact';
-      downloadLink.href = child.imageUrl;
-      downloadLink.download = `imagegen-${ns.state.result?.batchId || ns.state.result?.taskId || 'result'}-${index + 1}`;
-      downloadLink.textContent = '下载';
+      // 打开原图/下载是 <a href>，仅在 URL 协议合法时才渲染链接；复制/作参考是按钮，不受影响。
+      if (ns.isSafeLinkUrl(child.imageUrl)) {
+        const openLink = document.createElement('a');
+        openLink.className = 'button-link secondary compact';
+        openLink.href = child.imageUrl;
+        openLink.target = '_blank';
+        openLink.rel = 'noopener';
+        openLink.textContent = `打开原图 ${index + 1}`;
+        const downloadLink = document.createElement('a');
+        downloadLink.className = 'button-link secondary compact';
+        downloadLink.href = child.imageUrl;
+        downloadLink.download = `imagegen-${ns.state.result?.batchId || ns.state.result?.taskId || 'result'}-${index + 1}`;
+        downloadLink.textContent = '下载';
+        caption.append(openLink, downloadLink);
+      }
       const copyBtn = document.createElement('button');
       copyBtn.className = 'secondary compact';
       copyBtn.type = 'button';
@@ -144,7 +151,7 @@
       referenceBtn.type = 'button';
       referenceBtn.dataset.referenceUrl = child.imageUrl;
       referenceBtn.textContent = '作为参考图';
-      caption.append(openLink, downloadLink, copyBtn, referenceBtn);
+      caption.append(copyBtn, referenceBtn);
     } else {
       const status = document.createElement('span');
       status.className = 'slot-caption';

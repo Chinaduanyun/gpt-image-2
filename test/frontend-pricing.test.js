@@ -149,6 +149,7 @@ function createRerunHarness(script, estimate) {
     estimatePrice() { return estimate; },
     formatMicros(micros) { return `micros:${micros}`; },
     escapeHtml(value) { return String(value ?? ''); },
+    isSafeLinkUrl(url) { const t = String(url ?? '').trim(); return t ? ((t.startsWith('/') && !t.startsWith('//')) || /^https?:/i.test(t)) : false; },
     formatDate() { return date; },
     setStatus(message, type) { statuses.push({ message, type }); },
     hasPendingGeneration() { return false; },

@@ -8,6 +8,19 @@
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString('zh-CN', { hour12: false });
   };
+  // 仅允许把 http:/https: 或以 / 开头的同源相对路径放进 <a href>；拦截 javascript:、
+  // data:、vbscript: 等可执行/可注入协议。协议相对地址 //host 按 http(s) 解析视为合法。
+  ns.isSafeLinkUrl = (url) => {
+    const text = String(url ?? '').trim();
+    if (!text) return false;
+    if (text.startsWith('/') && !text.startsWith('//')) return true;
+    try {
+      const parsed = new URL(text, (typeof window !== 'undefined' && window.location?.href) || 'http://localhost/');
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
   ns.escapeHtml = (value) => String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
