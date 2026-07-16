@@ -1,0 +1,23 @@
+name: image-generation
+
+services:
+  image-generation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Existing app-data.json is root-owned; preserve the verified production runtime user.
+    user: "0:0"
+    ports:
+      - "${APP_PORT:-5577}:8787"
+    # Application settings, including QUICK_BATCH_ENABLED, belong in runtime.env.
+    # Do not duplicate them under environment: Compose would override env_file values.
+    env_file:
+      - path: runtime.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /data
+    volumes:
+      - /volume2/docker/gpt-image-2/data:/data
