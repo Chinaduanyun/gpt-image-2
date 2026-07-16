@@ -85,8 +85,26 @@ test('official image counts reject fractional values before estimation or submis
 });
 
 test('official integer image counts remain clamped to the supported range', () => {
-  assert.equal(sanitizeGenerationPayload({ model: 'gpt-image-2-official', n: 0 }, { model: 'gpt-image-2' }).n, 1);
-  assert.equal(sanitizeGenerationPayload({ model: 'gpt-image-2-official', n: 10 }, { model: 'gpt-image-2' }).n, 4);
+  assert.equal(sanitizeGenerationPayload({ model: 'gpt-image-2-official', prompt: 'test', n: 0 }, { model: 'gpt-image-2' }).n, 1);
+  assert.equal(sanitizeGenerationPayload({ model: 'gpt-image-2-official', prompt: 'test', n: 10 }, { model: 'gpt-image-2' }).n, 4);
+});
+
+test('sanitizeGenerationPayload enforces prompt and string parameter limits', () => {
+  const config = { model: 'gpt-image-2' };
+  // prompt must be a non-empty string within the length cap.
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2' }, config), /提示词必须是字符串/);
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 42 }, config), /提示词必须是字符串/);
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: '   ' }, config), /提示词不能为空/);
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 'x'.repeat(8001) }, config), /不能超过 8000/);
+  // A prompt exactly at the cap is accepted.
+  assert.equal(sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 'x'.repeat(8000) }, config).prompt.length, 8000);
+
+  // Optional string parameters must be strings and stay within 128 chars.
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 'ok', size: { bad: true } }, config), /参数 size 必须是字符串/);
+  assert.throws(() => sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 'ok', user: 'u'.repeat(129) }, config), /参数 user 长度不能超过 128/);
+  const clean = sanitizeGenerationPayload({ model: 'gpt-image-2', prompt: 'ok', size: '1:1', resolution: '1k' }, config);
+  assert.equal(clean.size, '1:1');
+  assert.equal(clean.resolution, '1k');
 });
 
 test('gpt-image-2-ext is accepted as a documented alias and normalized to the canonical model', () => {
