@@ -182,6 +182,10 @@
     if (ns.els?.referenceFileInput) ns.els.referenceFileInput.value = '';
     ns.updatePromptStats?.();
     ns.renderReferences?.();
+    // 切账号：清空标注编辑器状态并回到空态（话术按账号隔离，随下次 initEditPanel 回显）。
+    ns.resetEditState?.();
+    if (ns.els?.editUploadInput) ns.els.editUploadInput.value = '';
+    ns.renderEditor?.();
     ns.updatePendingUi?.();
   };
   ns.renderAuthState = () => {

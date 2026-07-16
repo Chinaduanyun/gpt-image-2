@@ -52,6 +52,9 @@
       <button class="preview-nav-button" type="button" data-preview-nav="library">
         <span aria-hidden="true">▦</span> 作品库
       </button>
+      <button class="preview-nav-button" type="button" data-preview-nav="edit">
+        <span aria-hidden="true">✎</span> 编辑
+      </button>
       <button id="adminToggleBtn" class="preview-nav-button hidden" type="button" data-preview-nav="admin">
         <span aria-hidden="true">⌘</span> 管理
       </button>
@@ -315,6 +318,80 @@
       <div id="myLogsList" class="log-list mini-note">暂无作品。</div>
     </section>
 
+    <section class="preview-view preview-edit" data-preview-view="edit" aria-labelledby="editTitle" hidden>
+      <div class="preview-page-head">
+        <div>
+          <span class="preview-eyebrow">Edit</span>
+          <h1 id="editTitle" tabindex="-1">标注式编辑</h1>
+          <p>在图上圈注要改的地方，配一句说明，让模型按标注重绘出一张新图。</p>
+        </div>
+        <div class="preview-edit-head-actions">
+          <button id="editChangeImageBtn" class="secondary compact hidden" type="button">更换图片</button>
+        </div>
+      </div>
+
+      <input id="editUploadInput" class="hidden" type="file" accept="image/*" />
+
+      <div id="editEmptyState" class="preview-edit-empty">
+        <div class="preview-empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <strong>选择一张图片开始标注</strong>
+          <p>在「作品库」或生成结果里点某张图片的「编辑此图」，或直接上传本地照片（JPG / PNG / WebP，单张 ≤ 20MB）。</p>
+          <button id="editUploadBtn" type="button">上传本地图片</button>
+        </div>
+        <div id="editEmptyStatus" class="status" aria-live="polite"></div>
+      </div>
+
+      <div id="editWorkspace" class="preview-edit-workspace hidden">
+        <div class="preview-edit-canvas-col">
+          <div class="preview-edit-toolbar" role="toolbar" aria-label="标注工具">
+            <div class="preview-edit-tool-group" id="editToolGroup" role="group" aria-label="标注工具形状">
+              <button class="edit-tool-btn is-active" type="button" data-edit-tool="brush" aria-pressed="true">画笔</button>
+              <button class="edit-tool-btn" type="button" data-edit-tool="rect" aria-pressed="false">矩形</button>
+              <button class="edit-tool-btn" type="button" data-edit-tool="ellipse" aria-pressed="false">椭圆</button>
+            </div>
+            <div class="preview-edit-tool-group" id="editColorGroup" role="group" aria-label="标注颜色"></div>
+            <div class="preview-edit-tool-group" id="editWidthGroup" role="group" aria-label="标注粗细"></div>
+            <div class="preview-edit-tool-group">
+              <button id="editUndoBtn" class="secondary compact" type="button">撤销</button>
+              <button id="editClearBtn" class="secondary compact" type="button">清空</button>
+            </div>
+          </div>
+          <div id="editCanvasStage" class="preview-edit-canvas-stage">
+            <canvas id="editBaseCanvas" class="preview-edit-canvas-base"></canvas>
+            <canvas id="editAnnotationCanvas" class="preview-edit-canvas-annotation"></canvas>
+          </div>
+          <div id="editSourceNote" class="mini-note"></div>
+        </div>
+
+        <aside class="preview-edit-side" aria-label="修改设置">
+          <div class="field preview-model-field">
+            <label for="editModel">生成模式</label>
+            <select id="editModel"></select>
+          </div>
+          <div class="field field-prompt">
+            <div class="label-row">
+              <label for="editPrompt">修改说明</label>
+              <span id="editPromptStats" class="mini-note">0 字</span>
+            </div>
+            <textarea id="editPrompt" placeholder="例如：把绿色圈出的那道菜换成一盘汤圆。"></textarea>
+          </div>
+          <label class="notify-toggle" id="editAppendField">
+            <input id="editAppendToggle" type="checkbox" checked />
+            <span>自动附加标注说明</span>
+          </label>
+          <div class="field">
+            <label for="editAnnotationText">附加话术（可编辑）</label>
+            <textarea id="editAnnotationText" rows="3"></textarea>
+          </div>
+          <div class="actions">
+            <button id="editSubmitBtn" type="button">生成修改图</button>
+          </div>
+          <div id="editStatus" class="status" aria-live="polite">上传或选择图片后开始标注。</div>
+        </aside>
+      </div>
+    </section>
+
     <div class="preview-view preview-admin-view" data-preview-view="admin" hidden>
       <section id="adminPanel" class="admin-shell hidden" aria-labelledby="adminTitle">
         <div class="preview-page-head preview-admin-head">
@@ -442,6 +519,8 @@
   <script src="./app/results.js"></script>
   <script src="./app/history.js"></script>
   <script src="./app/admin.js"></script>
+  <script src="./app/edit.js"></script>
+  <script src="./app/edit-canvas.js"></script>
   <script src="./app/main.js"></script>
   <script src="./workspace-shell.js"></script>
 </body>

@@ -1,5 +1,5 @@
 (() => {
-  const viewNames = new Set(['workspace', 'library', 'admin']);
+  const viewNames = new Set(['workspace', 'library', 'edit', 'admin']);
   const appShell = document.getElementById('appShell');
   const adminButton = document.getElementById('adminToggleBtn');
   const adminPanel = document.getElementById('adminPanel');
@@ -18,6 +18,7 @@
   const headings = {
     workspace: document.getElementById('workspaceTitle'),
     library: document.getElementById('libraryTitle'),
+    edit: document.getElementById('editTitle'),
     admin: document.getElementById('adminTitle')
   };
 

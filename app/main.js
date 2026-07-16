@@ -15,6 +15,7 @@
     ns.resetProgress();
     ns.renderReferences();
     ns.renderNotifyToggle();
+    ns.initEditPanel?.();
   };
 
   ns.bindEvents = () => {
@@ -60,6 +61,7 @@
     });
     document.addEventListener('paste', ns.handleReferencePaste);
     ns.els.notifyToggle?.addEventListener('change', ns.handleNotifyToggle);
+    ns.bindEditEvents?.();
   };
 
   ns.loadPublicConfig = async () => {

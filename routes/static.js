@@ -21,6 +21,8 @@ const STATIC_ALLOWLIST = new Set([
   '/app/results.js',
   '/app/history.js',
   '/app/admin.js',
+  '/app/edit.js',
+  '/app/edit-canvas.js',
   '/app/main.js'
 ]);
 

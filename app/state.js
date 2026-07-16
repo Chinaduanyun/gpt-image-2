@@ -35,7 +35,8 @@
     activeOperationToken: '',
     submitController: null,
     accountEpoch: 0,
-    loginAttemptId: 0
+    loginAttemptId: 0,
+    edit: null
   };
 
   ns.generationStepOrder = ['validate', 'submit', 'queued', 'poll', 'result', 'done'];
