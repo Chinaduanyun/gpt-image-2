@@ -53,21 +53,29 @@
     if (ns.state.progressTimer) window.clearInterval(ns.state.progressTimer);
     ns.state.progressTimer = null;
   };
-  ns.startProgress = (requestedCount = 1) => {
+  // 判定一次提交是否走"便宜渠道多图 → 拆成多个独立单图任务"的批量路径。
+  // 双保险：提交前可从参数预判（便宜渠道 && n>1 && 快速批量开启），或响应/记录已标记 kind==='batch'。
+  // 官方模型 n>1 是单个上游任务（一个任务出 N 张图），不是批量。
+  ns.isBatchSubmission = (settings = {}, kind = '') =>
+    String(kind).toLowerCase() === 'batch' ||
+    (Number(settings.n) > 1 && settings.model !== 'gpt-image-2-official' && ns.isQuickBatchEnabled());
+  ns.startProgress = (requestedCount = 1, isBatch = false) => {
     ns.stopProgress();
     ns.resetGenerationSteps();
     ns.setGenerationStep('submit');
     ns.state.progressStartedAt = Date.now();
     ns.els.progressPanel.className = 'progress-panel';
-    ns.els.progressHint.textContent = requestedCount > 1
+    ns.els.progressHint.textContent = isBatch
       ? `正在提交 ${requestedCount} 个单图任务。进度按服务端返回的子任务计数更新。`
-      : '正在提交生成任务。下方百分比是根据耗时估算，不是供应商真实进度。';
+      : requestedCount > 1
+        ? `正在生成 ${requestedCount} 张图片（单任务）。下方百分比是根据耗时估算，不是供应商真实进度。`
+        : '正在提交生成任务。下方百分比是根据耗时估算，不是供应商真实进度。';
     ns.els.progressElapsed.textContent = '已用时 0 秒';
-    ns.setProgress(requestedCount > 1 ? 0 : 2);
+    ns.setProgress(isBatch ? 0 : 2);
     ns.state.progressTimer = window.setInterval(() => {
       const elapsedMs = Date.now() - ns.state.progressStartedAt;
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
-      if (requestedCount === 1) ns.setProgress(ns.getSimulatedProgress(elapsedMs));
+      if (!isBatch) ns.setProgress(ns.getSimulatedProgress(elapsedMs));
       ns.els.progressElapsed.textContent = elapsedMs > ns.getProgressConfig().expectedDurationMs
         ? `已用时 ${elapsedSeconds} 秒，已超过预计耗时，请勿重复提交`
         : `已用时 ${elapsedSeconds} 秒`;
@@ -464,7 +472,7 @@
     const submitController = new AbortController();
     ns.state.submitController = submitController;
     ns.setBusy(true);
-    if (!automatic) ns.startProgress(pending.requestedCount);
+    if (!automatic) ns.startProgress(pending.requestedCount, ns.isBatchSubmission(pending.settings, pending.kind));
     ns.setStatus('正在使用原请求标识刷新状态，不会创建新的付费任务...', 'loading');
     try {
       let pollResult;
@@ -547,8 +555,8 @@
     ns.resetResult(false);
     ns.setBusy(true);
     ns.setStatus('正在提交生成任务...', 'loading');
-    ns.startProgress(settings.n);
-    const placeholder = settings.n > 1 && !ns.isOfficialModel()
+    ns.startProgress(settings.n, ns.isBatchSubmission(settings));
+    const placeholder = ns.isBatchSubmission(settings)
       ? ns.normalizeBatchResult({}, { prompt: settings.prompt, settings, requestedCount: settings.n })
       : ns.normalizeTaskResult({}, { prompt: settings.prompt, settings, status: 'submitting' });
     persistAndRender(placeholder);
