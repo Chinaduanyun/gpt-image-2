@@ -206,6 +206,8 @@
     ns.els.referenceUploadBtn.disabled = lockSettings;
     ns.els.referenceFileInput.disabled = lockSettings;
     if (ns.els.refreshCurrentTaskBtn) ns.els.refreshCurrentTaskBtn.classList.toggle('hidden', !pending);
+    // 编辑面板与主生成共用 busy/pending 锁：锁定时禁用编辑提交/上传等控件。
+    ns.updateEditControls?.();
   };
   ns.setBusy = (isBusy) => {
     ns.state.isBusy = isBusy;
@@ -571,7 +573,6 @@
 
   ns.handleRun = async () => {
     if (ns.hasPendingGeneration()) return ns.recoverPendingGeneration();
-    let operationToken = '';
     ns.resetGenerationSteps();
     ns.setGenerationStep('validate');
     if (!ns.validate()) {
@@ -590,6 +591,14 @@
     const quickBatchNote = !ns.isOfficialModel() && settings.n > 1 ? `\n将同时提交 ${settings.n} 个独立单图任务，每个任务最低收费 ${ns.formatMicros(estimate.minimumPerImageMicros)}。` : '';
     if ((estimate.isMaximum || ns.shouldConfirmHighCost() || quickBatchNote) && !window.confirm(`${confirmLabel}。${quickBatchNote}\n确认生成吗？`)) return;
 
+    await ns.runGeneration(settings);
+  };
+
+  // 公共提交/轮询/结果链路：接收已构建好的 settings，负责幂等键、恢复记录落盘、提交、轮询与
+  // 结果落地。主生成（handleRun）与标注编辑提交（handleEditSubmit）共用此路径与同一 busy 锁。
+  // 调用方需先完成表单校验、价格估算与用户确认。
+  ns.runGeneration = async (settings) => {
+    let operationToken = '';
     const idempotencyKey = ns.createIdempotencyKey();
     const ownerEmail = ns.state.session?.user?.email || '';
     const accountEpoch = ns.state.accountEpoch;
