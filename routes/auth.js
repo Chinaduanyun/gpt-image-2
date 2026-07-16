@@ -30,7 +30,7 @@ async function handleLogin(req, res) {
     return;
   }
 
-  setSessionCookie(res, result.token);
+  setSessionCookie(res, result.token, req);
   sendJson(res, 200, { token: result.token, user: result.user });
 }
 
@@ -46,7 +46,7 @@ async function handleLogout(req, res) {
       delete data.sessions[token];
     });
   }
-  clearSessionCookie(res);
+  clearSessionCookie(res, req);
   sendJson(res, 200, { ok: true });
 }
 

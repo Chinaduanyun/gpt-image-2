@@ -51,7 +51,7 @@ async function handleMe(req, res, pathname, url) {
   }
 
   if (pathname === '/api/me' && req.method === 'GET') {
-    setSessionCookie(res, auth.token);
+    setSessionCookie(res, auth.token, req);
     sendJson(res, 200, { user: publicUser(auth.user) });
     return;
   }
