@@ -203,3 +203,55 @@ test('continues mutation queue after a rejected mutation', { concurrency: false 
     assert.deepEqual(loadDataStore().spendLogs.map((log) => log.id), ['continued']);
   });
 });
+
+test('a mutation persists to disk before its promise resolves', { concurrency: false }, async () => {
+  await withAsyncDataDir(async (dataDir) => {
+    saveDataStore(emptyStore());
+
+    await withDataStoreMutation((data) => {
+      data.spendLogs.push({ id: 'durable' });
+    });
+
+    // The moment the awaiting caller resumes, the change must already be on disk;
+    // billing durability depends on the write completing before resolve.
+    const disk = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-data.json'), 'utf8'));
+    assert.deepEqual(disk.spendLogs.map((log) => log.id), ['durable']);
+  });
+});
+
+test('a failed atomic write leaves the original file intact and rolls back memory', { concurrency: false }, async () => {
+  await withAsyncDataDir(async (dataDir) => {
+    const seed = emptyStore();
+    seed.spendLogs.push({ id: 'original' });
+    saveDataStore(seed);
+    const dataFile = path.join(dataDir, 'app-data.json');
+    const before = fs.readFileSync(dataFile, 'utf8');
+
+    const originalRename = fs.promises.rename;
+    fs.promises.rename = async (oldPath, newPath) => {
+      if (String(newPath) === dataFile) throw new Error('simulated write failure');
+      return originalRename(oldPath, newPath);
+    };
+
+    try {
+      await assert.rejects(
+        withDataStoreMutation((data) => { data.spendLogs.push({ id: 'crashwrite' }); }),
+        /simulated write failure/
+      );
+      // Original data file untouched by the failed write.
+      assert.equal(fs.readFileSync(dataFile, 'utf8'), before);
+      // In-memory authoritative copy rolled back to the last persisted state.
+      assert.deepEqual(loadDataStore().spendLogs.map((log) => log.id), ['original']);
+    } finally {
+      fs.promises.rename = originalRename;
+    }
+
+    // The queue keeps working after a persist failure.
+    assert.equal(await withDataStoreMutation((data) => {
+      data.spendLogs.push({ id: 'recovered' });
+      return 'ok';
+    }), 'ok');
+    const disk = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+    assert.deepEqual(disk.spendLogs.map((log) => log.id), ['original', 'recovered']);
+  });
+});

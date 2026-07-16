@@ -13,6 +13,7 @@ const {
   parseJsonText,
   extractTaskId,
   extractImageUrls,
+  getTaskStatus,
   sanitizeErrorMessage,
   toApiMarketGenerationPayload
 } = require('../lib/api-market-client');
@@ -331,6 +332,26 @@ function batchDto(input) {
   };
 }
 
+// The upstream submit response can echo the whole request (prompt, params, usage
+// blobs). taskDto only spreads it to reconstruct a task-shaped body on the
+// duplicate-replay / unknown paths, and it overrides taskId/task_id/status/billing
+// afterwards. Store only the identity/status/image fields those consumers read so a
+// single log entry cannot grow unbounded.
+function slimSubmitResponse(json) {
+  if (!json || typeof json !== 'object') return json;
+  const taskId = extractTaskId(json);
+  const status = getTaskStatus(json);
+  const imageUrls = extractImageUrls(json);
+  const data = {};
+  if (taskId) data.task_id = taskId;
+  if (status) data.status = status;
+  if (imageUrls.length) data.result = { images: imageUrls.map((url) => ({ url })) };
+  const slim = {};
+  if (taskId) slim.task_id = taskId;
+  if (Object.keys(data).length) slim.data = data;
+  return slim;
+}
+
 function taskDto(log) {
   if (log.submitResponse && typeof log.submitResponse === 'object') {
     return { ...log.submitResponse, kind: 'task', taskId: log.taskId || '', task_id: log.taskId || '', ...clientRequestFields(log), status: log.status, billing: getBillingSummary(log) };
@@ -507,7 +528,7 @@ async function handleGeneration(req, res, config) {
           child.status = 'submitted';
           child.taskId = taskId;
           child.upstreamSubmitStatus = upstream.status;
-          child.submitResponse = json;
+          child.submitResponse = slimSubmitResponse(json);
         }
       });
       return getBatchLogs(latestData, precharge.batchId).map((log) => ({ ...log }));
@@ -553,7 +574,7 @@ async function handleGeneration(req, res, config) {
     const log = await withDataStoreMutation((latestData) => {
       const latestLog = latestData.spendLogs.find((entry) => entry.id === precharge.log.id);
       markSubmissionUnknown(latestLog, '提交返回成功状态但缺少 task_id；不会自动重试或退款。', upstream.status);
-      latestLog.submitResponse = submitJson;
+      latestLog.submitResponse = slimSubmitResponse(submitJson);
       return latestLog;
     });
     sendJson(res, 202, taskDto(log));
@@ -566,7 +587,7 @@ async function handleGeneration(req, res, config) {
       latestLog.status = 'submitted';
       latestLog.taskId = taskId;
       latestLog.upstreamSubmitStatus = upstream.status;
-      latestLog.submitResponse = submitJson;
+      latestLog.submitResponse = slimSubmitResponse(submitJson);
     }
     return latestLog;
   });
@@ -730,6 +751,7 @@ module.exports = {
   aggregateBatchBilling,
   childDto,
   batchDto,
+  slimSubmitResponse,
   taskDto,
   existingGenerationsByClientRequest,
   existingGenerationByIdempotency,
