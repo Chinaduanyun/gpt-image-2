@@ -110,6 +110,7 @@
     const figure = document.createElement('figure');
     figure.className = 'result-image-card';
     figure.dataset.slotIndex = String(index);
+    figure.dataset.imageUrl = child.imageUrl || '';
     const thumb = document.createElement('div');
     thumb.className = 'result-thumb result-slot';
     thumb.style.setProperty('--result-aspect-ratio', aspectRatioValue(settings.size));
@@ -179,6 +180,36 @@
     });
   }
 
+  // 就地刷新一个"尚无图片"的槽位（等待/生成中/失败/未知）：只替换无图的状态文本块与
+  // 说明文字，不触碰任何 img 节点。返回 false 表示结构异常，交给调用方整格重建。
+  function updateSlotStateInPlace(figure, child, index) {
+    const wrapper = figure?.querySelector?.('.result-slot-state');
+    const caption = figure?.querySelector?.('.slot-caption');
+    if (!wrapper || !caption) return false;
+    wrapper.replaceWith(createSlotState(child, index));
+    caption.textContent = child.taskId ? `Task ID: ${child.taskId}` : childStatusLabel(child);
+    return true;
+  }
+  // 按 child index 做 diff：已完成且 URL 未变的格子整块保留（img 不重设 src，避免轮询
+  // 期间反复销毁重建重新下载）；无图格子就地更新状态；仅新增/移除/换图的格子才动 DOM；
+  // 槽位总数变化才整体重建。
+  function updateResultGrid(children, settings) {
+    const grid = ns.els.resultGrid;
+    const existing = Array.from(grid.children || []);
+    if (existing.length !== children.length) {
+      grid.replaceChildren(...children.map((child, index) => ns.createResultItem(child, index, settings)));
+      return;
+    }
+    children.forEach((child, index) => {
+      const current = existing[index];
+      const previousUrl = current?.dataset?.imageUrl || '';
+      const nextUrl = child.imageUrl || '';
+      if (nextUrl && previousUrl === nextUrl) return;
+      if (!nextUrl && !previousUrl && updateSlotStateInPlace(current, child, index)) return;
+      current.replaceWith(ns.createResultItem(child, index, settings));
+    });
+  }
+
   ns.renderResult = (options = {}) => {
     const result = ns.state.result;
     if (!result) return ns.resetResult();
@@ -190,7 +221,7 @@
     ns.els.emptyState.classList.add('hidden');
     ns.els.resultCard.classList.remove('hidden');
     ns.els.resultActions?.classList.remove('hidden');
-    ns.els.resultGrid.replaceChildren(...children.map((child, index) => ns.createResultItem(child, index, settings)));
+    updateResultGrid(children, settings);
     const countText = result.kind === 'batch' ? `${successful}/${children.length} 成功${failed ? ` · ${failed} 失败` : ''}${unknown ? ` · ${unknown} 未知` : ''}` : `${successful || children.length} 张`;
     ns.els.resultSummary.textContent = `${settings.model || 'API Market'} · ${settings.size || '-'} · ${settings.resolution || '-'} · ${countText}`;
     const id = result.batchId || result.taskId || '';

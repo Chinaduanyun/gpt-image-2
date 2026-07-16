@@ -63,20 +63,32 @@
     }
   }
 
+  let lastStoredResultKey = '';
+  let lastStoredResultPayload = '';
   ns.saveStoredResult = () => {
     const key = ns.resultStorageKey();
     if (!key || !ns.state.result) return;
     const { debug, ...serializable } = ns.state.result;
-    const compact = { ...serializable, settings: settingsWithoutReferencePayload(serializable.settings), savedAt: new Date().toISOString() };
+    const compact = { ...serializable, settings: settingsWithoutReferencePayload(serializable.settings) };
+    // 只在内容（不含易变的 savedAt）与上次写入不同时才落盘：轮询每 4s 触发一次
+    // saveStoredResult，内容未变时跳过整段 localStorage 重写。
+    const payload = JSON.stringify(compact);
+    if (key === lastStoredResultKey && payload === lastStoredResultPayload) return;
     try {
-      window.localStorage.setItem(key, JSON.stringify(compact));
+      window.localStorage.setItem(key, JSON.stringify({ ...compact, savedAt: new Date().toISOString() }));
+      lastStoredResultKey = key;
+      lastStoredResultPayload = payload;
     } catch {
       window.localStorage.removeItem(key);
+      lastStoredResultKey = '';
+      lastStoredResultPayload = '';
     }
   };
   ns.clearStoredResult = () => {
     const key = ns.resultStorageKey();
     if (key) window.localStorage.removeItem(key);
+    lastStoredResultKey = '';
+    lastStoredResultPayload = '';
   };
   ns.savePendingRequest = async (pending, ownerEmail) => {
     const owner = String(ownerEmail || '').trim();
