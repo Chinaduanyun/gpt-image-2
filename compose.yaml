@@ -6,8 +6,10 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Existing app-data.json is root-owned; preserve the verified production runtime user.
-    user: "0:0"
+    # Run as an explicit non-root identity. APP_UID/APP_GID must be supplied by the
+    # launching shell or an uncommitted Compose .env, and must match the ownership of
+    # the migrated data copy (see deploy/migrate-data-ownership.sh). No root fallback.
+    user: "${APP_UID:?请显式提供 APP_UID}:${APP_GID:?请显式提供 APP_GID}"
     ports:
       - "${APP_PORT:-5577}:8787"
     # Application settings, including QUICK_BATCH_ENABLED, belong in runtime.env.

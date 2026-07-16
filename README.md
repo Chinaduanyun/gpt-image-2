@@ -89,7 +89,7 @@ Compose 的 `environment` 优先级高于 `env_file`。因此 `compose.yaml` 只
 
 ## Docker 本地示例
 
-`compose.yaml` 中的 `./.data:/data` 仅用于本地开发示例。Compose 强制要求显式提供 `APP_UID` 和 `APP_GID`，不会猜测镜像内 `node` 用户的 UID/GID。本地可使用当前用户身份：
+`compose.yaml` 中的 `./.data:/data` 仅用于本地开发示例。容器以显式非 root 身份运行：`user:` 字段写作 `"${APP_UID:?…}:${APP_GID:?…}"`，未提供 `APP_UID`/`APP_GID` 时 Compose 直接报错，不存在写死的 `0:0` root 回退，也不会猜测镜像内 `node` 用户的 UID/GID。本地可使用当前用户身份：
 
 ```sh
 export APP_UID="$(id -u)"
@@ -124,7 +124,7 @@ NAS 部署时应继续使用宿主绝对路径 `/volume2/docker/gpt-image-2/data
 
 1. 停止旧容器或至少阻止写入，确认没有生成、结算或后台刷新正在修改数据。2026-07-10 的只读审计发现 3 条 `settled=false`、`status=submitting` 且没有 `taskId` 的旧记录；它们无法通过上游任务接口自动追踪。正式切换前必须逐条人工核对并记录退款、保留预扣或其他处置决定，不能把它们误当作可按 legacy 50 自动结算的正常在途任务。
 2. 将 `/volume2/docker/gpt-image-2/data/app-data.json` 与 `/volume2/docker/gpt-image-2/data/images/` 作为一个不可拆分的数据集，在同一冻结点完成一致性快照或完整复制。不能先后在业务仍可写入时分别复制，也不能只备份 JSON 而遗漏图片。
-3. 只在一致快照的可写副本上，将数据根目录、`app-data.json`、`images/` 及其全部内容递归调整为已经明确选定的 `APP_UID:APP_GID`，并设置最小必要的目录和文件权限。不得先对唯一生产数据原件执行 `chown`、`chmod` 或写入测试。
+3. 只在一致快照的可写副本上，将数据根目录、`app-data.json`、`images/` 及其全部内容递归调整为已经明确选定的 `APP_UID:APP_GID`，并设置最小必要的目录和文件权限（目录 700、文件 600）。可使用 `deploy/migrate-data-ownership.sh --uid <UID> --gid <GID> --dir <快照副本目录>`：默认 `--dry-run` 只打印将执行的 `chown`/`chmod` 与探针命令，确认无误后再加 `--apply` 真正执行；脚本拒绝迁移到 root 且只应指向快照副本。不得先对唯一生产数据原件执行 `chown`、`chmod` 或写入测试。
 4. 先以相同 UID/GID 对快照副本做读写探针。例如将副本挂载到 `/data` 后运行 `docker run --rm --user "$APP_UID:$APP_GID" -v /已确认的快照副本:/data:rw node:22-alpine sh -c 'test -r /data/app-data.json && test -d /data/images && test -x /data/images && probe=/data/.permission-probe-$$ && : > "$probe" && rm "$probe"'`；也可用实际新容器执行等价探针。路径必须替换为快照副本，不能指向唯一生产目录。
 5. 记录旧镜像标识、启动参数、端口、环境变量名称、数据挂载以及选定的 UID/GID，且不要把环境变量的真实值写入迁移记录。
 6. 使用同一快照副本验证新镜像可启动、历史用户和账目可读取、旧图片可访问、新任务可完整结算。
