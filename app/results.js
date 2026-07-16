@@ -237,6 +237,8 @@
     ns.els.useAllResultsAsReferenceBtn.disabled = successful === 0;
     ns.els.regenerateResultBtn.disabled = ns.hasPendingGeneration();
     ns.els.refreshCurrentTaskBtn?.classList.toggle('hidden', !ns.hasPendingGeneration());
+    // 打包下载仅对含 ≥2 张成功图片的多图结果开放。
+    ns.els.downloadResultZipBtn?.classList.toggle('hidden', successful < 2);
     if (result.debug) ns.showDebug(result.debug);
     else {
       ns.els.debugDetails.classList.add('hidden');
@@ -296,6 +298,12 @@
   };
 
   ns.handleCopyLink = ns.handleResultAction;
+  ns.downloadCurrentResultZip = async () => {
+    const result = ns.state.result;
+    const urls = (result?.imageUrls || []).filter(Boolean);
+    if (urls.length < 2) return ns.setStatus('当前结果不足 2 张成功图片，无需打包。', 'error');
+    await ns.downloadImagesAsZip(result.batchId || result.taskId || 'result', urls);
+  };
   ns.reuseCurrentResult = () => ns.applyResultToForm(ns.state.result);
   ns.useAllCurrentResultsAsReference = async () => {
     const urls = ns.state.result?.imageUrls || [];

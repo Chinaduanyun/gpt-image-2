@@ -144,6 +144,7 @@
           <button class="secondary compact" type="button" data-history-action="reuse" data-log-id="${ns.escapeHtml(log.id)}">复用</button>
           <button class="secondary compact" type="button" data-history-action="regenerate" data-log-id="${ns.escapeHtml(log.id)}" ${status.group === 'active' || status.group === 'attention' ? 'disabled title="任务尚未安全结束"' : ''}>再生成</button>
           ${imageUrls.length ? `<button class="secondary compact" type="button" data-history-action="reference" data-log-id="${ns.escapeHtml(log.id)}">图片作参考</button>` : ''}
+          ${imageUrls.length >= 2 ? `<button class="secondary compact" type="button" data-history-action="download-zip" data-log-id="${ns.escapeHtml(log.id)}">打包下载</button>` : ''}
           ${canDelete ? `<button class="secondary compact danger-button history-delete-btn" type="button" data-history-action="delete" data-log-id="${ns.escapeHtml(log.id)}">隐藏作品</button>` : `<button class="secondary compact history-delete-btn" type="button" disabled title="${ns.escapeHtml(deleteBlocker)}">不可隐藏</button>`}
         </div>` : '';
       return `
@@ -242,6 +243,7 @@
     if (!log) return;
     if (action === 'reuse') return applyHistoryLogToForm(log);
     if (action === 'reference') return ns.addReferenceUrls(log.imageUrls || [], '历史作品');
+    if (action === 'download-zip') return ns.downloadImagesAsZip(log.batchId || log.batch_id || log.taskId || log.task_id || log.id, log.imageUrls || []);
     if (action === 'regenerate') {
       if (ns.hasPendingGeneration()) return ns.setStatus('当前任务尚未安全结束，不能创建新的付费请求。请先刷新当前任务。', 'error');
       if (!applyHistoryLogToForm(log)) return;

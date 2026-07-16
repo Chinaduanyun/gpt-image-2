@@ -46,6 +46,7 @@
     ns.els.reuseResultPromptBtn.addEventListener('click', ns.reuseCurrentResult);
     ns.els.regenerateResultBtn.addEventListener('click', ns.regenerateCurrentResult);
     ns.els.useAllResultsAsReferenceBtn.addEventListener('click', ns.useAllCurrentResultsAsReference);
+    ns.els.downloadResultZipBtn?.addEventListener('click', ns.downloadCurrentResultZip);
     ns.els.myLogsList.addEventListener('click', ns.handleHistoryClick);
     ns.els.referenceUploadBtn.addEventListener('click', () => ns.els.referenceFileInput.click());
     ns.els.referenceFileInput.addEventListener('change', ns.addReferenceFiles);

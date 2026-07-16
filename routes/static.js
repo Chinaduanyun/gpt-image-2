@@ -13,6 +13,7 @@ const STATIC_ALLOWLIST = new Set([
   '/app/state.js',
   '/app/dom.js',
   '/app/utils.js',
+  '/app/zip.js',
   '/app/pricing.js',
   '/app/auth.js',
   '/app/references.js',
