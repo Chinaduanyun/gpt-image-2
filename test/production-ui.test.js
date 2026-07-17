@@ -204,6 +204,34 @@ test('production composer keeps prompt content in natural grid rows', () => {
   assert.doesNotMatch(workspaceCss, /\.preview-prompt-field\s*\{[^}]*min-height:\s*0;/);
 });
 
+test('production edit toolbar has scoped, accessible control contracts', () => {
+  const editJs = fs.readFileSync(path.join(root, 'app/edit.js'), 'utf8');
+  const editCanvasJs = fs.readFileSync(path.join(root, 'app/edit-canvas.js'), 'utf8');
+
+  assert.match(html, /id="editToolGroup"[^>]*role="group"[^>]*aria-label="标注工具形状"/);
+  assert.match(html, /data-edit-tool="brush"[^>]*aria-label="画笔（自由涂抹）"[^>]*aria-pressed="true"/);
+  assert.match(html, /data-edit-tool="rect"[^>]*aria-label="矩形框选"[^>]*aria-pressed="false"/);
+  assert.match(html, /data-edit-tool="ellipse"[^>]*aria-label="椭圆圈选"[^>]*aria-pressed="false"/);
+  assert.match(html, /id="editUndoBtn"[^>]*aria-label="撤销上一笔"/);
+  assert.match(html, /id="editClearBtn"[^>]*aria-label="清空全部标注"/);
+  assert.match(html, /id="editColorGroup"[^>]*role="group"[^>]*aria-label="标注颜色"/);
+  assert.match(html, /id="editWidthGroup"[^>]*role="group"[^>]*aria-label="标注粗细"/);
+  assert.match(workspaceCss, /\.preview-page \.preview-edit-toolbar \.edit-seg-btn/);
+  assert.match(workspaceCss, /\.preview-page \.preview-edit-toolbar \.edit-seg-btn\.is-active,[\s\S]*?\[aria-pressed="true"\]/);
+  assert.match(workspaceCss, /background:\s*var\(--preview-accent\);[\s\S]*?color:\s*#ffffff;/);
+  assert.match(workspaceCss, /\.edit-seg-danger:hover:not\(:disabled\),[\s\S]*?\.edit-seg-danger:focus-visible:not\(:disabled\)[\s\S]*?var\(--preview-danger\)/);
+  assert.match(workspaceCss, /\.edit-color-btn\.is-active,[\s\S]*?\.edit-color-btn\[aria-pressed="true"\][\s\S]*?box-shadow:/);
+  assert.match(workspaceCss, /\.edit-color-btn\.is-active::after,[\s\S]*?content:\s*"✓"/);
+  assert.match(workspaceCss, /\.edit-width-dot[\s\S]*?background:\s*currentColor;/);
+  assert.match(workspaceCss, /\.preview-edit-canvas-stage[\s\S]*?align-items:\s*flex-start;[\s\S]*?justify-content:\s*center;/);
+  assert.match(workspaceCss, /\.preview-edit-toolbar[\s\S]*?overflow-x:\s*auto;[\s\S]*?overflow-y:\s*hidden;/);
+  assert.match(workspaceCss, /@media \(max-width: 920px\)[\s\S]*?\.preview-edit-toolbar \.edit-seg-btn,[\s\S]*?\.preview-edit-toolbar \.edit-color-btn[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/);
+  assert.match(workspaceCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition-duration:\s*0\.01ms !important;/);
+  assert.match(editCanvasJs, /button\.setAttribute\('aria-label', `标注颜色：\$\{color\.name\}`\)/);
+  assert.match(editCanvasJs, /button\.setAttribute\('aria-pressed', active \? 'true' : 'false'\)/);
+  assert.match(editJs, /buildEditWidthButtons\?\.\(\);\s*ns\.renderEditToolbarState\?\.\(\);/);
+});
+
 test('production library uses image-first cards and delegated artwork details', () => {
   assert.equal(idCount('previewHistoryDialog'), 1);
   assert.equal(idCount('previewHistoryDetailContent'), 1);

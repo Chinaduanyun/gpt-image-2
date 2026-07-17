@@ -378,6 +378,7 @@
     }
     ns.buildEditColorButtons?.();
     ns.buildEditWidthButtons?.();
+    ns.renderEditToolbarState?.();
     ns.loadEditAnnotation();
     if (ns.els?.editAppendToggle) ns.els.editAppendToggle.checked = true;
     ns.updateEditPromptStats();

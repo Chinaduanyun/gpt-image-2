@@ -1094,122 +1094,189 @@
   min-width: 0;
 }
 
-.preview-edit-toolbar {
+.preview-page .preview-edit-toolbar {
   display: flex;
   flex-wrap: nowrap;
-  gap: 10px;
   align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--preview-border);
   border-radius: var(--preview-radius-sm);
   background: var(--preview-surface);
   box-shadow: var(--preview-shadow-sm);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: thin;
+  scrollbar-color: var(--preview-border-strong) transparent;
 }
 
-.edit-tool-seg {
+.preview-page .edit-tool-seg {
   display: inline-flex;
-  gap: 2px;
+  flex: none;
   align-items: center;
+  gap: 2px;
   padding: 3px;
+  border: 1px solid var(--preview-border);
   border-radius: 12px;
   background: var(--preview-surface-muted);
-  flex: none;
 }
 
-.edit-toolbar-divider {
+.preview-page .edit-toolbar-divider {
   width: 1px;
-  height: 26px;
-  background: var(--preview-border);
+  height: 28px;
   flex: none;
+  background: var(--preview-border-strong);
 }
 
-.edit-seg-btn {
+/* These selectors intentionally include .preview-page to override the global button treatment. */
+.preview-page .preview-edit-toolbar .edit-seg-btn,
+.preview-page .preview-edit-toolbar .edit-color-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+  transform: none;
+}
+
+.preview-page .preview-edit-toolbar .edit-seg-btn {
+  min-width: 42px;
+  min-height: 40px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 40px;
-  height: 38px;
   padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
-  color: var(--preview-muted);
+  color: #4d4e5d;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.edit-seg-btn svg {
+.preview-page .preview-edit-toolbar .edit-seg-btn svg {
   flex: none;
 }
 
-.edit-seg-btn:hover:not(:disabled) {
-  color: var(--preview-text);
-  background: var(--preview-surface);
-}
-
-.edit-seg-btn.is-active {
-  border-color: var(--preview-accent);
-  background: var(--preview-surface);
+.preview-page .preview-edit-toolbar .edit-seg-btn:hover:not(:disabled) {
+  background: var(--preview-accent-soft);
   color: var(--preview-accent-strong);
-  box-shadow: 0 1px 3px rgba(28, 25, 52, 0.08);
 }
 
-.edit-seg-btn:disabled {
-  opacity: 0.45;
+.preview-page .preview-edit-toolbar .edit-seg-btn.is-active,
+.preview-page .preview-edit-toolbar .edit-seg-btn[aria-pressed="true"] {
+  border-color: var(--preview-accent);
+  background: var(--preview-accent);
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(81, 67, 213, 0.28);
+}
+
+.preview-page .preview-edit-toolbar .edit-seg-btn:disabled,
+.preview-page .preview-edit-toolbar .edit-color-btn:disabled {
+  opacity: 0.62;
+  color: #8b8c99;
   cursor: not-allowed;
 }
 
-.edit-seg-danger:hover:not(:disabled) {
+.preview-page .preview-edit-toolbar .edit-seg-btn.edit-seg-danger {
+  color: #5d5e6b;
+}
+
+.preview-page .preview-edit-toolbar .edit-seg-btn.edit-seg-danger:hover:not(:disabled),
+.preview-page .preview-edit-toolbar .edit-seg-btn.edit-seg-danger:focus-visible:not(:disabled) {
+  border-color: #e79a96;
+  background: #fff0ef;
   color: var(--preview-danger);
+  box-shadow: none;
 }
 
-.edit-color-seg {
-  gap: 7px;
-  padding: 3px 9px;
+.preview-page .preview-edit-toolbar .edit-color-seg {
+  gap: 2px;
+  padding: 3px;
 }
 
-.edit-color-btn {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 2px solid var(--preview-surface);
-  border-radius: 50%;
-  background: var(--edit-color, #22c55e);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
-  cursor: pointer;
-  flex: none;
-  transition: transform 0.12s ease;
-}
-
-.edit-color-btn:hover {
-  transform: scale(1.12);
-}
-
-.edit-color-btn.is-active {
-  outline: 2px solid var(--preview-accent);
-  outline-offset: 2px;
-  transform: scale(1.08);
-}
-
-.edit-width-btn {
+.preview-page .preview-edit-toolbar .edit-color-btn {
+  position: relative;
+  width: 40px;
   min-width: 40px;
+  min-height: 40px;
+  height: 40px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: radial-gradient(circle, var(--edit-color, #22c55e) 0 12px, transparent 13px);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.preview-page .preview-edit-toolbar .edit-color-btn::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(17, 24, 39, 0.22);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.preview-page .preview-edit-toolbar .edit-color-btn:hover:not(:disabled) {
+  background-color: var(--preview-accent-soft);
+}
+
+.preview-page .preview-edit-toolbar .edit-color-btn.is-active,
+.preview-page .preview-edit-toolbar .edit-color-btn[aria-pressed="true"] {
+  border-color: var(--preview-accent);
+  background-color: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 1px #ffffff, 0 0 0 2px var(--preview-accent);
+}
+
+.preview-page .preview-edit-toolbar .edit-color-btn.is-active::after,
+.preview-page .preview-edit-toolbar .edit-color-btn[aria-pressed="true"]::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(17, 24, 39, 0.75);
+  pointer-events: none;
+}
+
+.preview-page .preview-edit-toolbar .edit-color-btn[data-edit-color="#ffffff"].is-active::after,
+.preview-page .preview-edit-toolbar .edit-color-btn[data-edit-color="#ffffff"][aria-pressed="true"]::after {
+  color: var(--preview-accent-strong);
+  text-shadow: none;
+}
+
+.preview-page .preview-edit-toolbar .edit-width-btn {
+  min-width: 42px;
   padding: 0;
 }
 
-.edit-width-dot {
+.preview-page .preview-edit-toolbar .edit-width-dot {
+  flex: none;
   border-radius: 50%;
   background: currentColor;
-  flex: none;
+}
+
+.preview-page .preview-edit-toolbar .edit-seg-btn:focus-visible,
+.preview-page .preview-edit-toolbar .edit-color-btn:focus-visible {
+  outline: 3px solid rgba(81, 67, 213, 0.62);
+  outline-offset: 3px;
 }
 
 .preview-edit-canvas-stage {
   position: relative;
   display: flex;
+  align-items: flex-start;
   justify-content: center;
   padding: 14px;
   border: 1px solid var(--preview-border);
@@ -2004,25 +2071,22 @@
     min-height: 40px;
   }
 
-  /* 编辑工具栏窄屏：隐藏文字标签只留图标、放大触控目标，整条横向滚动而不换行。 */
-  .preview-edit-toolbar {
+  /* 编辑工具栏窄屏：隐藏文字标签、维持 44px 触控目标，整条横向滚动而不换行。 */
+  .preview-page .preview-edit-toolbar {
     gap: 8px;
     padding: 6px 8px;
   }
 
-  .edit-seg-label {
+  .preview-page .preview-edit-toolbar .edit-seg-label {
     display: none;
   }
 
-  .edit-seg-btn {
-    min-width: 42px;
-    height: 42px;
+  .preview-page .preview-edit-toolbar .edit-seg-btn,
+  .preview-page .preview-edit-toolbar .edit-color-btn {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
     padding: 0;
-  }
-
-  .edit-color-btn {
-    width: 28px;
-    height: 28px;
   }
 }
 
