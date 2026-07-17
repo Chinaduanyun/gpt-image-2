@@ -12,7 +12,8 @@
     return ns.isOfficialModel() || ns.isQuickBatchEnabled() ? count : 1;
   };
   ns.getPricingConfig = () => ns.state.publicConfig?.pricing || {};
-  ns.getPixelSize = () => ns.getPricingConfig().sizeResolutionMap?.[ns.els.aspectRatio.value]?.[ns.els.resolution.value] || '';
+  ns.getPixelSize = (size = ns.els.aspectRatio.value, resolution = ns.els.resolution.value) =>
+    ns.getPricingConfig().sizeResolutionMap?.[size]?.[resolution] || '';
   ns.normalizePricingModel = (model) => model === 'gpt-image-2-ext' ? 'gpt-image-2' : String(model || '').trim();
   ns.getPricingProfile = () => {
     const model = ns.normalizePricingModel(ns.els.model.value);
@@ -43,15 +44,18 @@
   };
   ns.formatMicros = ns.formatAdaptiveMicros;
 
-  ns.estimatePrice = () => {
+  // overrides 允许调用方（如编辑 Tab）用自己的参数计价而不读全局控件：{ size, resolution, n }。
+  ns.estimatePrice = (overrides = {}) => {
     const pricing = ns.getPricingConfig();
     const profile = ns.getPricingProfile();
     if (!profile) return { ok: false, error: `模型 ${ns.els.model.value || '未知'} 缺少有效计价策略，暂时无法生成。` };
 
-    const n = ns.getImageCount();
+    const size = overrides.size ?? ns.els.aspectRatio.value;
+    const resolution = overrides.resolution ?? ns.els.resolution.value;
+    const n = overrides.n ?? ns.getImageCount();
     const priceMap = ns.isOfficialModel() ? pricing.officialPriceMap : pricing.simplePriceMap;
-    const pixelSize = ns.isOfficialModel() ? ns.getPixelSize() : '';
-    const exact = ns.isOfficialModel() ? priceMap?.[pixelSize]?.[ns.els.quality.value] : priceMap?.[ns.els.resolution.value];
+    const pixelSize = ns.isOfficialModel() ? ns.getPixelSize(size, resolution) : '';
+    const exact = ns.isOfficialModel() ? priceMap?.[pixelSize]?.[ns.els.quality.value] : priceMap?.[resolution];
     const fallback = ns.maxPriceValue(priceMap);
     const providerUnitUsd = Number(exact ?? fallback);
     const microsPerUnit = Number(pricing.microsPerUnit) || 1000000;
@@ -74,8 +78,8 @@
       precise: !isMaximum,
       isMaximum,
       detail: ns.isOfficialModel()
-        ? `${isMaximum ? (pixelSize || ns.els.aspectRatio.value) : pixelSize} · ${ns.els.quality.value} · ${n} 张`
-        : `快速低价版 · ${isMaximum ? '最高预扣' : ns.els.resolution.value} · ${n} 张`
+        ? `${isMaximum ? (pixelSize || size) : pixelSize} · ${ns.els.quality.value} · ${n} 张`
+        : `快速低价版 · ${isMaximum ? '最高预扣' : resolution} · ${n} 张`
     };
   };
 
@@ -149,5 +153,7 @@
     ns.els.compressionField.classList.toggle('hidden', !official || ns.els.outputFormat.value === 'png');
     ns.els.compressionValue.textContent = ns.els.outputCompression.value;
     ns.updatePriceEstimate();
+    // 计价配置载入或模型/质量变化后，编辑 Tab 的参数说明行同步刷新（脚本载入顺序无关）。
+    ns.updateEditParamsNote?.();
   };
 })();

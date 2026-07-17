@@ -41,6 +41,45 @@ test('isEditableImageUrl only allows same-origin archived images and local data 
   assert.equal(ns.isEditableImageUrl(null), false);
 });
 
+test('nearestAspectRatio maps image dimensions to the closest supported ratio', () => {
+  const ns = loadEdit();
+  assert.equal(ns.nearestAspectRatio(1024, 1024), '1:1');
+  assert.equal(ns.nearestAspectRatio(1080, 1920), '9:16');
+  assert.equal(ns.nearestAspectRatio(1920, 1080), '16:9');
+  assert.equal(ns.nearestAspectRatio(3000, 2000), '3:2');
+  assert.equal(ns.nearestAspectRatio(2000, 1000), '2:1');
+  assert.equal(ns.nearestAspectRatio(5000, 1000), '3:1');
+  // 手机原图常见 4032x3024 = 4:3。
+  assert.equal(ns.nearestAspectRatio(4032, 3024), '4:3');
+  // 略偏方形取 1:1（对数距离对横竖对称）。
+  assert.equal(ns.nearestAspectRatio(1000, 999), '1:1');
+  assert.equal(ns.nearestAspectRatio(999, 1000), '1:1');
+  // 非法输入退 1:1，不抛错。
+  assert.equal(ns.nearestAspectRatio(0, 100), '1:1');
+  assert.equal(ns.nearestAspectRatio(undefined, undefined), '1:1');
+});
+
+test('edit settings use the edit tab ratio/resolution controls, not the global ones', () => {
+  const ns = loadEdit();
+  ns.isOfficialModel = () => false;
+  ns.els = {
+    model: { value: 'gpt-image-2' },
+    aspectRatio: { value: '16:9' },       // 全局创作页控件：不得被继承
+    resolution: { value: '4k' },
+    editAspectRatio: { value: 'follow' },
+    editResolution: { value: '1k' }
+  };
+  ns.state.edit = { naturalWidth: 768, naturalHeight: 1024 };
+  const settings = ns.getEditSettings('data:image/webp;base64,AAAA', '把菜换成汤圆');
+  assert.equal(settings.size, '3:4');
+  assert.equal(settings.resolution, '1k');
+  assert.equal(settings.n, 1);
+  assert.deepEqual([...settings.image_urls], ['data:image/webp;base64,AAAA']);
+  // 显式选择时直接采用，不再跟随原图。
+  ns.els.editAspectRatio.value = '21:9';
+  assert.equal(ns.getEditSettings('data:x', 'p').size, '21:9');
+});
+
 test('stroke coordinates round-trip between display and natural space', () => {
   const ns = loadEdit();
   const display = { width: 400, height: 300 };

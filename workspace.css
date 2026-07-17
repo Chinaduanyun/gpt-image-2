@@ -1317,6 +1317,16 @@
   width: 100%;
 }
 
+.preview-edit-params {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.preview-edit-params select {
+  width: 100%;
+}
+
 .preview-edit-side #editPrompt {
   min-height: 120px;
 }

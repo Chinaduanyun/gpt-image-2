@@ -30,8 +30,31 @@
   ns.EDIT_MIN_DOWNSCALE_LONG_SIDE = 1024;
   ns.EDIT_DOWNSCALE_FACTOR = 0.8;
   ns.EDIT_DEFAULT_ANNOTATION = '请严格按照图中标注进行修改；最终成图不得保留任何标注笔迹、线框或圈选痕迹；未标注区域尽量与原图保持一致。';
+  // 编辑可选的显式画面比例（与创作页一致，但不含 auto——"跟随原图"会解析成其中之一，
+  // 显式传给上游比 auto 更确定，计价也能查到精确价而非最高预扣）。
+  ns.EDIT_RATIO_CHOICES = ['1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '2:1', '1:2', '3:1', '1:3', '21:9', '9:21'];
 
   // ---- 纯函数（可单测，无 DOM 依赖）----
+
+  // 给定原图宽高，从 EDIT_RATIO_CHOICES 里选最接近的比例（按对数距离，横竖对称）。
+  // 尺寸缺失/非法时退 1:1。
+  ns.nearestAspectRatio = (width, height) => {
+    const w = Number(width);
+    const h = Number(height);
+    if (!(w > 0) || !(h > 0)) return '1:1';
+    const target = Math.log(w / h);
+    let best = '1:1';
+    let bestDiff = Infinity;
+    for (const choice of ns.EDIT_RATIO_CHOICES) {
+      const [rw, rh] = choice.split(':').map(Number);
+      const diff = Math.abs(Math.log(rw / rh) - target);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = choice;
+      }
+    }
+    return best;
+  };
 
   // 图片可编辑性：仅同源已归档 /api/stored-images/ 或本地上传的 data:image/ 允许（不会污染
   // canvas，能读回像素）；跨域远程图、javascript: 等一律不可编辑。
@@ -178,6 +201,38 @@
     ns.updateModelUi?.();
   };
 
+  // 编辑参数说明行：实时显示"跟随原图"解析出的比例、清晰度与预计单价，
+  // 让提交确认框弹出前用户就能看到实际生效的参数。
+  ns.updateEditParamsNote = () => {
+    if (!ns.els?.editParamsNote) return;
+    const raw = ns.els?.editAspectRatio?.value || 'follow';
+    const resolution = ns.getEditResolution?.() || '1k';
+    const hasImage = ns.editHasImage();
+    let ratioText;
+    let size = raw;
+    if (raw === 'follow') {
+      if (hasImage) {
+        size = ns.resolveEditAspectRatio();
+        ratioText = `跟随原图 → ${size}`;
+      } else {
+        ratioText = '跟随原图（载入图片后按原图就近取比例）';
+        size = '';
+      }
+    } else {
+      ratioText = raw;
+    }
+    const parts = [ratioText, resolution];
+    if (size && typeof ns.estimatePrice === 'function') {
+      const estimate = ns.estimatePrice({ size, resolution, n: 1 });
+      if (estimate.ok) {
+        parts.push(estimate.isMaximum
+          ? `最高预扣 ${ns.formatMicros(estimate.unitMicros)}/张`
+          : `预计 ${ns.formatMicros(estimate.unitMicros)}/张`);
+      }
+    }
+    ns.els.editParamsNote.textContent = parts.filter(Boolean).join(' · ');
+  };
+
   // 依据 busy/pending 锁定编辑面板控件（与主生成共用 busy 锁，禁止并发两个任务）。
   ns.updateEditControls = () => {
     const locked = Boolean(ns.state.isBusy || ns.hasPendingGeneration?.());
@@ -225,6 +280,7 @@
       }
       ns.state.edit = edit;
       ns.renderEditor();
+      ns.updateEditParamsNote();
       ns.setEditStatus('已载入图片，选好工具即可在图上标注。', 'ok');
       ns.setEditEmptyStatus('');
     };
@@ -306,15 +362,24 @@
   };
 
   // ---- 提交 ----
+  // 编辑 Tab 的比例/清晰度独立于创作页（不再隐式继承全局下拉框，防止"复用"回填等
+  // 路径悄悄改掉编辑输出比例）："跟随原图"按原图宽高解析成最接近的显式比例。
+  ns.resolveEditAspectRatio = () => {
+    const raw = ns.els?.editAspectRatio?.value || 'follow';
+    if (raw !== 'follow') return raw;
+    return ns.nearestAspectRatio(ns.state.edit?.naturalWidth, ns.state.edit?.naturalHeight);
+  };
+  ns.getEditResolution = () => ns.els?.editResolution?.value || '1k';
+
   // 以合成图为唯一参考图、编辑 prompt 为提示词，复用主生成的 runGeneration 提交/轮询/结果链路。
-  // n 固定 1；尺寸参数沿用全局当前设置；不使用/不清空生成 Tab 的参考图列表。
+  // n 固定 1；比例/清晰度用编辑 Tab 自己的控件；不使用/不清空生成 Tab 的参考图列表。
   ns.getEditSettings = (dataUrl, prompt) => {
     const settings = {
       model: ns.els.model.value,
       prompt,
       n: 1,
-      size: ns.els.aspectRatio.value,
-      resolution: ns.els.resolution.value
+      size: ns.resolveEditAspectRatio(),
+      resolution: ns.getEditResolution()
     };
     if (ns.isOfficialModel()) {
       settings.quality = ns.els.quality.value;
@@ -336,7 +401,9 @@
     if (!check.ok) return ns.setEditStatus(check.error, 'error');
     if (!ns.state.edit.strokes.length && !window.confirm('当前还没有任何标注，确认仅凭提示词修改整张图吗？')) return;
 
-    const estimate = ns.estimatePrice();
+    const size = ns.resolveEditAspectRatio();
+    const resolution = ns.getEditResolution();
+    const estimate = ns.estimatePrice({ size, resolution, n: 1 });
     if (!estimate.ok) return ns.setEditStatus(`无法生成：${estimate.error || '价格配置异常。'}`, 'error');
 
     let composed;
@@ -348,7 +415,7 @@
     }
     const settings = ns.getEditSettings(composed.dataUrl, check.prompt);
     const costLabel = estimate.isMaximum ? `最高预扣 ${ns.formatMicros(estimate.unitMicros)}` : `预计 ${ns.formatMicros(estimate.unitMicros)}`;
-    if (!window.confirm(`将按标注生成 1 张修改图，${costLabel}。确认提交吗？`)) {
+    if (!window.confirm(`将按标注生成 1 张修改图（${size} · ${resolution}），${costLabel}。确认提交吗？`)) {
       ns.setEditStatus('已取消提交。');
       return;
     }
@@ -382,6 +449,7 @@
     ns.loadEditAnnotation();
     if (ns.els?.editAppendToggle) ns.els.editAppendToggle.checked = true;
     ns.updateEditPromptStats();
+    ns.updateEditParamsNote();
     ns.renderEditor();
   };
 
@@ -413,8 +481,14 @@
     ns.els?.editModel?.addEventListener('change', () => {
       ns.syncGlobalModelFromEdit();
       ns.updateEditControls();
+      ns.updateEditParamsNote();
     });
-    ns.els?.model?.addEventListener('change', () => ns.syncEditModelFromGlobal());
+    ns.els?.model?.addEventListener('change', () => {
+      ns.syncEditModelFromGlobal();
+      ns.updateEditParamsNote();
+    });
+    ns.els?.editAspectRatio?.addEventListener('change', ns.updateEditParamsNote);
+    ns.els?.editResolution?.addEventListener('change', ns.updateEditParamsNote);
     ns.bindEditCanvasEvents?.();
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       let resizeTimer = null;
