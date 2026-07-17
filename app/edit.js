@@ -20,10 +20,10 @@
   ];
   ns.EDIT_DEFAULT_WIDTH_TIER = 1;
   ns.EDIT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-  // 合成图解码后字节上限：生产上游中转（apib.ai）的 nginx 实测限制整个请求体 1MB
-  // （1024KB 放行、1152KB 返回 413），base64 会放大 4/3，再留 prompt/JSON 开销余量：
-  // 解码后 ≤680KB → base64 约 907KB，总请求体稳定在 1MB 以内。后端单张 5MB 硬限自然满足。
-  ns.EDIT_MAX_COMPOSED_BYTES = 680 * 1024;
+  // 合成图解码后字节上限：后端单张参考图硬限 5MB，留安全余量取 4.8MB。
+  // 上游入口 api.apib.ai 2026-07-17 实测 32MB 请求体放行，不再是瓶颈
+  // （旧裸域名 apib.ai 的 1MB 限制已绕开，680KB 压缩预算随之废止）。
+  ns.EDIT_MAX_COMPOSED_BYTES = Math.round(4.8 * 1024 * 1024);
   // 有损编码质量阶梯：先降质量、再缩尺寸。照片型合成图 WebP/JPEG 一两百 KB 即可达标，
   // 通常第一档就能通过。
   ns.EDIT_QUALITY_LADDER = [0.9, 0.8, 0.7];
@@ -281,7 +281,7 @@
   // ---- 合成导出 ----
   // 按原图分辨率合成"原图 + 标注笔迹"，一律走有损编码（WebP，编码不支持时退 JPEG），
   // 套用"降质量→缩尺寸"决策链（纯函数 planComposeStep），返回 { dataUrl, width, height }；
-  // 到 1024 长边、最低质量档仍超限则抛错。上限对齐上游中转 1MB 请求体限制，见 EDIT_MAX_COMPOSED_BYTES。
+  // 到 1024 长边、最低质量档仍超限则抛错。上限对齐后端单张参考图 5MB 硬限，见 EDIT_MAX_COMPOSED_BYTES。
   ns.composeEditedImage = () => {
     const edit = ns.state.edit;
     if (!edit?.image || !edit.naturalWidth || !edit.naturalHeight) throw new Error('当前没有可导出的编辑图像。');
@@ -300,7 +300,7 @@
       plan = ns.planComposeStep({ qualityIndex, width, height, bytes: ns.estimateDataUrlBytes(dataUrl) });
     }
     if (plan.action !== 'accept') {
-      throw new Error('标注图压缩到最小分辨率后仍超过上游通道 1MB 限制，请缩小原图分辨率后重试。');
+      throw new Error('标注图压缩到最小分辨率后仍超过单张 5MB 限制，请缩小原图分辨率后重试。');
     }
     return { dataUrl, width, height };
   };

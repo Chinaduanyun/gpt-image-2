@@ -131,12 +131,15 @@ test('planComposeStep never downscales below the 1024 long-side floor', () => {
   assert.equal(Math.max(step.width, step.height), 1024);
 });
 
-test('composite byte budget stays inside the upstream 1MB relay limit', () => {
+test('composite byte budget stays inside the backend 5MB single-image limit', () => {
   const ns = loadEdit();
-  // 解码 680KB → base64 约 907KB，加 prompt/JSON 开销后仍须 < 1MB（中转实测限制）。
-  assert.equal(ns.EDIT_MAX_COMPOSED_BYTES, 680 * 1024);
+  // 后端单张参考图硬限 5MB，预算取 4.8MB 留余量；base64 放大 4/3 后加 64KB 开销
+  // 仍须低于提交守卫 MAX_UPSTREAM_BODY_BYTES（24MB，对齐后端 GENERATION_BODY_LIMIT）。
+  const { MAX_REFERENCE_IMAGE_BYTES } = require(path.join(root, 'lib/constants.js'));
+  assert.equal(ns.EDIT_MAX_COMPOSED_BYTES, Math.round(4.8 * 1024 * 1024));
+  assert.ok(ns.EDIT_MAX_COMPOSED_BYTES < MAX_REFERENCE_IMAGE_BYTES, '合成图预算必须低于后端单张 5MB 硬限');
   const base64Bytes = Math.ceil(ns.EDIT_MAX_COMPOSED_BYTES / 3) * 4;
-  assert.ok(base64Bytes + 64 * 1024 < 1024 * 1024, 'base64 合成图 + 64KB 开销必须小于 1MiB');
+  assert.ok(base64Bytes + 64 * 1024 < 24 * 1024 * 1024, 'base64 合成图 + 64KB 开销必须小于 24MB 守卫');
 });
 
 test('estimateRequestBodyBytes counts multi-byte characters and MAX_UPSTREAM_BODY_BYTES has headroom', () => {
@@ -150,9 +153,10 @@ test('estimateRequestBodyBytes counts multi-byte characters and MAX_UPSTREAM_BOD
   // ASCII / base64 内容按 1 字节计，中文按 3 字节计。
   assert.equal(ns.estimateRequestBodyBytes({ a: 'xxxx' }), JSON.stringify({ a: 'xxxx' }).length);
   assert.ok(ns.estimateRequestBodyBytes({ p: '汤圆' }) > JSON.stringify({ p: '汤圆' }).length - 4 + 4);
-  // 守卫上限须低于中转的 1MiB 硬限。
-  assert.ok(ns.MAX_UPSTREAM_BODY_BYTES < 1024 * 1024);
-  assert.equal(ns.MAX_UPSTREAM_BODY_BYTES, 1000 * 1024);
+  // 守卫上限对齐后端 GENERATION_BODY_LIMIT（24MB），不得超过它。
+  const { GENERATION_BODY_LIMIT } = require(path2.join(root, 'lib/constants.js'));
+  assert.equal(ns.MAX_UPSTREAM_BODY_BYTES, 24 * 1024 * 1024);
+  assert.ok(ns.MAX_UPSTREAM_BODY_BYTES <= GENERATION_BODY_LIMIT);
 });
 
 test('buildEditPrompt appends annotation only when the toggle is on', () => {

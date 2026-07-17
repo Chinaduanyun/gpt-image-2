@@ -598,11 +598,11 @@
   // 结果落地。主生成（handleRun）与标注编辑提交（handleEditSubmit）共用此路径与同一 busy 锁。
   // 调用方需先完成表单校验、价格估算与用户确认。
   ns.runGeneration = async (settings) => {
-    // 上游中转通道限制整个请求体 1MB：提交前先估算并拦截，替代神秘的 413。
-    // 主要来源是 image_urls 里的 base64 参考图/合成图。
+    // 后端请求体上限 24MB（上游 api.apib.ai 实测 32MB 放行，已非瓶颈）：提交前先估算并拦截，
+    // 替代神秘的 413。主要来源是 image_urls 里的 base64 参考图/合成图。
     const bodyBytes = ns.estimateRequestBodyBytes?.(settings) || 0;
     if (bodyBytes > ns.MAX_UPSTREAM_BODY_BYTES) {
-      ns.setStatus(`请求体约 ${(bodyBytes / 1024 / 1024).toFixed(2)}MB，超过上游通道 1MB 限制；请减少参考图数量或先压缩图片后重试。`, 'error');
+      ns.setStatus(`请求体约 ${(bodyBytes / 1024 / 1024).toFixed(2)}MB，超过 24MB 上限；请减少参考图数量或先压缩图片后重试。`, 'error');
       return;
     }
     let operationToken = '';

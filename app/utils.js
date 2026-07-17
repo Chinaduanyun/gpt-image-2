@@ -37,9 +37,10 @@
       return false;
     }
   };
-  // 生产上游中转（apib.ai）nginx 实测限制整个请求体 1MB（1024KB 放行、1152KB 拒 413）；
-  // 留余量按 1000KB 卡，提交前先在前端拦截并给出可操作的中文提示，避免神秘 413。
-  ns.MAX_UPSTREAM_BODY_BYTES = 1000 * 1024;
+  // 上游入口已切换为 api.apib.ai（2026-07-17 实测请求体 32MB 仍放行；旧裸域名 apib.ai
+  // 的 1MB nginx 限制已绕开）。瓶颈回到我们后端 GENERATION_BODY_LIMIT = 24MB，
+  // 守卫与之对齐，提交前在前端拦截并给出可操作的中文提示，避免神秘 413。
+  ns.MAX_UPSTREAM_BODY_BYTES = 24 * 1024 * 1024;
   ns.estimateRequestBodyBytes = (settings) => {
     let json = '';
     try { json = JSON.stringify(settings) || ''; } catch { return 0; }
