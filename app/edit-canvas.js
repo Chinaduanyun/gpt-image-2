@@ -41,14 +41,21 @@
   ns.buildEditWidthButtons = () => {
     const group = ns.els?.editWidthGroup;
     if (!group) return;
+    // 三档粗细用实心圆点直观表达（5/9/14px），文字说明留在 title/aria-label。
+    const dotSizes = [5, 9, 14];
     group.replaceChildren(...ns.EDIT_WIDTH_TIERS.map((tier, index) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'edit-width-btn';
+      button.className = 'edit-seg-btn edit-width-btn';
       button.dataset.editWidthTier = String(index);
       button.title = `粗细：${tier.label}`;
       button.setAttribute('aria-label', `粗细：${tier.label}`);
-      button.textContent = tier.label;
+      const dot = document.createElement('span');
+      dot.className = 'edit-width-dot';
+      const size = dotSizes[index] || dotSizes[1];
+      dot.style.width = `${size}px`;
+      dot.style.height = `${size}px`;
+      button.append(dot);
       return button;
     }));
   };
