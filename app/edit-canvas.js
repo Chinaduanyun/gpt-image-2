@@ -247,6 +247,20 @@
   };
 
   // ---- 合成到离屏 canvas 并导出 dataURL（按目标尺寸重放原图 + 笔画）----
+  // 探测浏览器 canvas 能否编码 WebP（Safari 不支持编码，会静默返回 PNG），不行则退 JPEG。
+  let lossyExportFormat = '';
+  ns.detectLossyExportFormat = () => {
+    if (lossyExportFormat) return lossyExportFormat;
+    try {
+      const probe = document.createElement('canvas');
+      probe.width = 2;
+      probe.height = 2;
+      lossyExportFormat = probe.toDataURL('image/webp').startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
+    } catch {
+      lossyExportFormat = 'image/jpeg';
+    }
+    return lossyExportFormat;
+  };
   ns.renderCompositeDataUrl = (width, height, format = 'image/png', quality) => {
     const edit = ns.state.edit;
     if (!edit?.image) throw new Error('当前没有可导出的编辑图像。');
@@ -255,6 +269,11 @@
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('浏览器不支持 canvas 导出。');
+    if (format === 'image/jpeg') {
+      // JPEG 无透明通道，缺省会把透明区压成黑色；先铺白底。
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+    }
     ctx.drawImage(edit.image, 0, 0, width, height);
     const scale = width / edit.naturalWidth;
     for (const stroke of edit.strokes) drawStroke(ctx, stroke, scale);

@@ -20,8 +20,13 @@
   ];
   ns.EDIT_DEFAULT_WIDTH_TIER = 1;
   ns.EDIT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-  // 合成图解码后字节上限：后端单张参考图硬限 5MB，这里留安全余量取 4.8MB。
-  ns.EDIT_MAX_COMPOSED_BYTES = Math.round(4.8 * 1024 * 1024);
+  // 合成图解码后字节上限：生产上游中转（apib.ai）的 nginx 实测限制整个请求体 1MB
+  // （1024KB 放行、1152KB 返回 413），base64 会放大 4/3，再留 prompt/JSON 开销余量：
+  // 解码后 ≤680KB → base64 约 907KB，总请求体稳定在 1MB 以内。后端单张 5MB 硬限自然满足。
+  ns.EDIT_MAX_COMPOSED_BYTES = 680 * 1024;
+  // 有损编码质量阶梯：先降质量、再缩尺寸。照片型合成图 WebP/JPEG 一两百 KB 即可达标，
+  // 通常第一档就能通过。
+  ns.EDIT_QUALITY_LADDER = [0.9, 0.8, 0.7];
   ns.EDIT_MIN_DOWNSCALE_LONG_SIDE = 1024;
   ns.EDIT_DOWNSCALE_FACTOR = 0.8;
   ns.EDIT_DEFAULT_ANNOTATION = '请严格按照图中标注进行修改；最终成图不得保留任何标注笔迹、线框或圈选痕迹；未标注区域尽量与原图保持一致。';
@@ -69,30 +74,33 @@
     return Math.max(0, Math.floor((len * 3) / 4) - padding);
   };
 
-  // 导出降级决策链的"一步"（纯函数）：给定当前编码阶段、尺寸与估算字节，返回下一步动作。
-  //   stage: 'png' | 'webp' | 'downscale'
-  //   返回 { action:'accept' } | { action:'encode', stage, width, height } | { action:'fail' }
-  // 链路：PNG 超限 → 转 WebP(同尺寸) → 仍超限则长边 ×0.8 逐级缩放(重编码 WebP) →
-  //       缩到长边 1024 仍超限则 fail。
+  // 导出降级决策链的"一步"（纯函数）：给定当前质量档、尺寸与估算字节，返回下一步动作。
+  //   qualityIndex: EDIT_QUALITY_LADDER 的下标
+  //   返回 { action:'accept' } | { action:'encode', qualityIndex, width, height } | { action:'fail' }
+  // 链路：超限先降质量档（尺寸不变），质量档用尽后长边 ×factor 逐级缩放（保持最低质量档），
+  //       缩到长边 minLongSide 仍超限则 fail。
   ns.planComposeStep = ({
-    stage,
+    qualityIndex,
     width,
     height,
     bytes,
     limit = ns.EDIT_MAX_COMPOSED_BYTES,
     minLongSide = ns.EDIT_MIN_DOWNSCALE_LONG_SIDE,
-    factor = ns.EDIT_DOWNSCALE_FACTOR
+    factor = ns.EDIT_DOWNSCALE_FACTOR,
+    ladder = ns.EDIT_QUALITY_LADDER
   }) => {
-    if (bytes <= limit) return { action: 'accept', stage, width, height };
-    if (stage === 'png') return { action: 'encode', stage: 'webp', width, height };
-    // webp / downscale 仍超限：尝试缩小长边（不低于 minLongSide）。
+    if (bytes <= limit) return { action: 'accept', qualityIndex, width, height };
+    if (qualityIndex < ladder.length - 1) {
+      return { action: 'encode', qualityIndex: qualityIndex + 1, width, height };
+    }
+    // 质量档已到底仍超限：尝试缩小长边（不低于 minLongSide）。
     const longSide = Math.max(width, height);
     if (longSide <= minLongSide) return { action: 'fail' };
     const nextLong = Math.max(minLongSide, Math.round(longSide * factor));
     const scale = nextLong / longSide;
     return {
       action: 'encode',
-      stage: 'downscale',
+      qualityIndex,
       width: Math.max(1, Math.round(width * scale)),
       height: Math.max(1, Math.round(height * scale))
     };
@@ -271,24 +279,28 @@
   };
 
   // ---- 合成导出 ----
-  // 按原图分辨率合成"原图 + 标注笔迹"，套用 PNG→WebP→缩放阶梯的降级决策链（纯函数 planComposeStep），
-  // 返回 { dataUrl, width, height }；到 1024 长边仍超限则抛错。
+  // 按原图分辨率合成"原图 + 标注笔迹"，一律走有损编码（WebP，编码不支持时退 JPEG），
+  // 套用"降质量→缩尺寸"决策链（纯函数 planComposeStep），返回 { dataUrl, width, height }；
+  // 到 1024 长边、最低质量档仍超限则抛错。上限对齐上游中转 1MB 请求体限制，见 EDIT_MAX_COMPOSED_BYTES。
   ns.composeEditedImage = () => {
     const edit = ns.state.edit;
     if (!edit?.image || !edit.naturalWidth || !edit.naturalHeight) throw new Error('当前没有可导出的编辑图像。');
+    const format = ns.detectLossyExportFormat?.() || 'image/jpeg';
+    let qualityIndex = 0;
     let width = edit.naturalWidth;
     let height = edit.naturalHeight;
-    let dataUrl = ns.renderCompositeDataUrl(width, height, 'image/png');
-    let plan = ns.planComposeStep({ stage: 'png', width, height, bytes: ns.estimateDataUrlBytes(dataUrl) });
+    let dataUrl = ns.renderCompositeDataUrl(width, height, format, ns.EDIT_QUALITY_LADDER[qualityIndex]);
+    let plan = ns.planComposeStep({ qualityIndex, width, height, bytes: ns.estimateDataUrlBytes(dataUrl) });
     let guard = 0;
     while (plan.action === 'encode' && guard++ < 64) {
+      qualityIndex = plan.qualityIndex;
       width = plan.width;
       height = plan.height;
-      dataUrl = ns.renderCompositeDataUrl(width, height, 'image/webp', 0.92);
-      plan = ns.planComposeStep({ stage: plan.stage, width, height, bytes: ns.estimateDataUrlBytes(dataUrl) });
+      dataUrl = ns.renderCompositeDataUrl(width, height, format, ns.EDIT_QUALITY_LADDER[qualityIndex]);
+      plan = ns.planComposeStep({ qualityIndex, width, height, bytes: ns.estimateDataUrlBytes(dataUrl) });
     }
     if (plan.action !== 'accept') {
-      throw new Error('标注图压缩到最小分辨率后仍超过大小上限，请缩小原图分辨率或减少标注后重试。');
+      throw new Error('标注图压缩到最小分辨率后仍超过上游通道 1MB 限制，请缩小原图分辨率后重试。');
     }
     return { dataUrl, width, height };
   };

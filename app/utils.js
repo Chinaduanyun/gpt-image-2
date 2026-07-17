@@ -37,6 +37,14 @@
       return false;
     }
   };
+  // 生产上游中转（apib.ai）nginx 实测限制整个请求体 1MB（1024KB 放行、1152KB 拒 413）；
+  // 留余量按 1000KB 卡，提交前先在前端拦截并给出可操作的中文提示，避免神秘 413。
+  ns.MAX_UPSTREAM_BODY_BYTES = 1000 * 1024;
+  ns.estimateRequestBodyBytes = (settings) => {
+    let json = '';
+    try { json = JSON.stringify(settings) || ''; } catch { return 0; }
+    try { return new TextEncoder().encode(json).length; } catch { return json.length; }
+  };
   ns.escapeHtml = (value) => String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')

@@ -77,56 +77,82 @@ test('estimateDataUrlBytes approximates decoded size from base64 length', () => 
   assert.equal(ns.estimateDataUrlBytes(''), 0);
 });
 
-test('planComposeStep walks PNG -> WebP -> downscale ladder then fails at the floor', () => {
+test('planComposeStep walks the quality ladder then the downscale ladder then fails at the floor', () => {
   const ns = loadEdit();
   const limit = 100;
   const minLongSide = 40;
   const factor = 0.8;
-  const opts = { limit, minLongSide, factor };
+  const ladder = [0.9, 0.8, 0.7];
+  const opts = { limit, minLongSide, factor, ladder };
 
-  // PNG 在限内：直接接受。
+  // 首档质量在限内：直接接受。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'png', width: 200, height: 100, bytes: 80, ...opts })),
-    { action: 'accept', stage: 'png', width: 200, height: 100 }
+    plain(ns.planComposeStep({ qualityIndex: 0, width: 200, height: 100, bytes: 80, ...opts })),
+    { action: 'accept', qualityIndex: 0, width: 200, height: 100 }
   );
-  // PNG 超限：转 WebP，尺寸不变。
+  // 首档超限：降到下一质量档，尺寸不变。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'png', width: 200, height: 100, bytes: 150, ...opts })),
-    { action: 'encode', stage: 'webp', width: 200, height: 100 }
+    plain(ns.planComposeStep({ qualityIndex: 0, width: 200, height: 100, bytes: 150, ...opts })),
+    { action: 'encode', qualityIndex: 1, width: 200, height: 100 }
   );
-  // WebP 在限内：接受。
+  // 中间档仍超限：继续降档。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'webp', width: 200, height: 100, bytes: 90, ...opts })),
-    { action: 'accept', stage: 'webp', width: 200, height: 100 }
+    plain(ns.planComposeStep({ qualityIndex: 1, width: 200, height: 100, bytes: 150, ...opts })),
+    { action: 'encode', qualityIndex: 2, width: 200, height: 100 }
   );
-  // WebP 超限：长边 ×0.8 缩放并重编码为 downscale。
+  // 最低质量档超限：长边 ×0.8 缩放，质量档保持最低。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'webp', width: 200, height: 100, bytes: 150, ...opts })),
-    { action: 'encode', stage: 'downscale', width: 160, height: 80 }
+    plain(ns.planComposeStep({ qualityIndex: 2, width: 200, height: 100, bytes: 150, ...opts })),
+    { action: 'encode', qualityIndex: 2, width: 160, height: 80 }
   );
-  // downscale 仍超限：继续缩。
+  // 缩放后仍超限：继续缩。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'downscale', width: 160, height: 80, bytes: 150, ...opts })),
-    { action: 'encode', stage: 'downscale', width: 128, height: 64 }
+    plain(ns.planComposeStep({ qualityIndex: 2, width: 160, height: 80, bytes: 150, ...opts })),
+    { action: 'encode', qualityIndex: 2, width: 128, height: 64 }
   );
-  // 已到长边下限仍超限：失败。
+  // 已到长边下限、最低质量档仍超限：失败。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'downscale', width: 40, height: 20, bytes: 150, ...opts })),
+    plain(ns.planComposeStep({ qualityIndex: 2, width: 40, height: 20, bytes: 150, ...opts })),
     { action: 'fail' }
   );
   // 长边恰好等于下限、在限内：接受。
   assert.deepEqual(
-    plain(ns.planComposeStep({ stage: 'downscale', width: 40, height: 20, bytes: 90, ...opts })),
-    { action: 'accept', stage: 'downscale', width: 40, height: 20 }
+    plain(ns.planComposeStep({ qualityIndex: 2, width: 40, height: 20, bytes: 90, ...opts })),
+    { action: 'accept', qualityIndex: 2, width: 40, height: 20 }
   );
 });
 
 test('planComposeStep never downscales below the 1024 long-side floor', () => {
   const ns = loadEdit();
-  const step = ns.planComposeStep({ stage: 'webp', width: 1100, height: 900, bytes: 10 * 1024 * 1024 });
+  const last = ns.EDIT_QUALITY_LADDER.length - 1;
+  const step = ns.planComposeStep({ qualityIndex: last, width: 1100, height: 900, bytes: 10 * 1024 * 1024 });
   assert.equal(step.action, 'encode');
-  assert.equal(step.stage, 'downscale');
+  assert.equal(step.qualityIndex, last);
   assert.equal(Math.max(step.width, step.height), 1024);
+});
+
+test('composite byte budget stays inside the upstream 1MB relay limit', () => {
+  const ns = loadEdit();
+  // 解码 680KB → base64 约 907KB，加 prompt/JSON 开销后仍须 < 1MB（中转实测限制）。
+  assert.equal(ns.EDIT_MAX_COMPOSED_BYTES, 680 * 1024);
+  const base64Bytes = Math.ceil(ns.EDIT_MAX_COMPOSED_BYTES / 3) * 4;
+  assert.ok(base64Bytes + 64 * 1024 < 1024 * 1024, 'base64 合成图 + 64KB 开销必须小于 1MiB');
+});
+
+test('estimateRequestBodyBytes counts multi-byte characters and MAX_UPSTREAM_BODY_BYTES has headroom', () => {
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const vm2 = require('node:vm');
+  const ns = { state: {}, els: {} };
+  vm2.runInNewContext(fs2.readFileSync(path2.join(root, 'app/utils.js'), 'utf8'), {
+    window: { ImageGen: ns }, TextEncoder, JSON, String, Number, Array, URL, fetch: () => {}
+  });
+  // ASCII / base64 内容按 1 字节计，中文按 3 字节计。
+  assert.equal(ns.estimateRequestBodyBytes({ a: 'xxxx' }), JSON.stringify({ a: 'xxxx' }).length);
+  assert.ok(ns.estimateRequestBodyBytes({ p: '汤圆' }) > JSON.stringify({ p: '汤圆' }).length - 4 + 4);
+  // 守卫上限须低于中转的 1MiB 硬限。
+  assert.ok(ns.MAX_UPSTREAM_BODY_BYTES < 1024 * 1024);
+  assert.equal(ns.MAX_UPSTREAM_BODY_BYTES, 1000 * 1024);
 });
 
 test('buildEditPrompt appends annotation only when the toggle is on', () => {
