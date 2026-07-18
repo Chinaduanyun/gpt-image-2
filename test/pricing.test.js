@@ -49,7 +49,8 @@ test('official 1:1 4K high uses multiplier 10.5 for one or four images', () => {
   assert.equal(one.unitMicros, 5978280);
   assert.equal(one.totalMicros, 5978280);
   assert.equal(four.billingImageCount, 4);
-  assert.equal(four.minimumChargeMicros, 1200000);
+  // 4K 阶梯下限 850000 × 4 张。
+  assert.equal(four.minimumChargeMicros, 3400000);
   assert.equal(four.totalMicros, 23913120);
 });
 
@@ -67,6 +68,29 @@ test('official low-price estimates apply the floor once per requested image', ()
   assert.equal(four.unitMicros, 300000);
   assert.equal(four.minimumChargeMicros, 1200000);
   assert.equal(four.totalMicros, 1200000);
+});
+
+test('official low-tier floors step with the requested resolution', () => {
+  // 官方渠道 low 档 ×10.5 后全档低于阶梯下限，实收应恰为 1k=0.30 / 2k=0.55 / 4k=0.85。
+  const floors = { '1k': 300000, '2k': 550000, '4k': 850000 };
+  for (const [resolution, floor] of Object.entries(floors)) {
+    const estimate = estimateGenerationCostMicros({
+      model: 'gpt-image-2-official', size: '1:1', resolution, quality: 'low', n: 1
+    });
+    assert.equal(estimate.ok, true, resolution);
+    assert.equal(estimate.minimumPerImageMicros, floor, resolution);
+    assert.equal(estimate.unitMicros, floor, resolution);
+    assert.equal(estimate.minimumChargeMicros, floor, resolution);
+  }
+  // medium/high 高于下限时不受影响（2k medium: 0.08576×10.5=¥0.90048）。
+  const medium = estimateGenerationCostMicros({
+    model: 'gpt-image-2-official', size: '1:1', resolution: '2k', quality: 'medium', n: 1
+  });
+  assert.equal(medium.unitMicros, 900480);
+  // 快速版没有阶梯配置，仍用平价下限 0.30，2k/4k 单价不变。
+  const cheap4k = estimateGenerationCostMicros({ model: 'gpt-image-2', resolution: '4k', n: 1 });
+  assert.equal(cheap4k.minimumPerImageMicros, 300000);
+  assert.equal(cheap4k.unitMicros, 756000);
 });
 
 test('official image counts reject fractional values before estimation or submission', () => {

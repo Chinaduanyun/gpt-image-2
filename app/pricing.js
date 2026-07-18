@@ -22,7 +22,13 @@
     const totalMultiplier = Number(profile.totalMultiplier);
     const minimumPerImageMicros = Number(profile.minimumPerImageMicros);
     if (!Number.isFinite(totalMultiplier) || totalMultiplier <= 0 || !Number.isSafeInteger(minimumPerImageMicros) || minimumPerImageMicros <= 0) return null;
-    return { model, totalMultiplier, minimumPerImageMicros };
+    const byResolution = profile.minimumPerImageMicrosByResolution;
+    return {
+      model,
+      totalMultiplier,
+      minimumPerImageMicros,
+      minimumPerImageMicrosByResolution: byResolution && typeof byResolution === 'object' ? byResolution : undefined
+    };
   };
   ns.maxPriceValue = (map) => {
     const values = Object.values(map || {}).flatMap((value) => typeof value === 'object' && value ? Object.values(value) : [value]).map(Number).filter(Number.isFinite);
@@ -60,7 +66,9 @@
     const providerUnitUsd = Number(exact ?? fallback);
     const microsPerUnit = Number(pricing.microsPerUnit) || 1000000;
     const convertedUnitMicros = Math.round(providerUnitUsd * profile.totalMultiplier * microsPerUnit);
-    const unitMicros = Math.max(convertedUnitMicros, profile.minimumPerImageMicros);
+    // 单张下限与后端同口径：优先按清晰度取阶梯下限（官方渠道），否则用平价下限。
+    const minimumPerImageMicros = profile.minimumPerImageMicrosByResolution?.[resolution] ?? profile.minimumPerImageMicros;
+    const unitMicros = Math.max(convertedUnitMicros, minimumPerImageMicros);
     const totalMicros = unitMicros * n;
     const isMaximum = exact === undefined;
     if (![convertedUnitMicros, unitMicros, totalMicros].every(Number.isSafeInteger)) {
@@ -70,7 +78,7 @@
       ok: true,
       model: profile.model,
       totalMultiplier: profile.totalMultiplier,
-      minimumPerImageMicros: profile.minimumPerImageMicros,
+      minimumPerImageMicros,
       convertedUnitMicros,
       unitMicros,
       totalMicros,

@@ -151,6 +151,36 @@ test('new-policy settlement uses the multiplier charge above the task floor', ()
   assert.equal(data.users['u@example.com'].balanceMicros, 100000);
 });
 
+test('failed tasks settle by multiplier only — the floor never applies', () => {
+  // 失败且上游报 cost:0 → 全额退款（此前会被下限收 ¥0.30，与"cost 缺失→退款"分支不一致）。
+  const data = { users: { 'u@example.com': { balanceMicros: 0 } } };
+  const log = {
+    email: 'u@example.com',
+    status: 'failed',
+    billingPolicy: 'provider-task-total-with-per-image-floor-v1',
+    totalMultiplier: 36,
+    minimumPerImageMicros: 300000,
+    billingImageCount: 1,
+    minimumChargeMicros: 300000,
+    chargedMicros: 306000,
+    settled: false
+  };
+  assert.equal(applyProviderCostSettlement(data, log, 0), true);
+  assert.equal(log.actualCostMicros, 0);
+  assert.equal(log.chargedMicros, 0);
+  assert.equal(data.users['u@example.com'].balanceMicros, 306000);
+
+  // 失败但上游确实收了钱 → 按系数结算、不套下限（低于下限也照实收）。
+  const data2 = { users: { 'u@example.com': { balanceMicros: 0 } } };
+  const log2 = { ...log, chargedMicros: 306000, settled: false };
+  delete log2.actualCostMicros;
+  delete log2.providerCostMicros;
+  assert.equal(applyProviderCostSettlement(data2, log2, 2000), true);
+  assert.equal(log2.actualCostMicros, 72000);
+  assert.equal(log2.chargedMicros, 72000);
+  assert.equal(data2.users['u@example.com'].balanceMicros, 234000);
+});
+
 test('persisted floor policy is dispatched by its stable identifier', () => {
   assert.deepEqual(getSettlementPricingSnapshot({
     billingPolicy: 'provider-task-total-with-per-image-floor-v1',

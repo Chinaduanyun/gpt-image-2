@@ -35,7 +35,8 @@ test('public config exposes model pricing profiles without legacy settlement pol
   });
   assert.deepEqual(body.pricing.modelProfiles['gpt-image-2-official'], {
     totalMultiplier: 10.5,
-    minimumPerImageMicros: 300000
+    minimumPerImageMicros: 300000,
+    minimumPerImageMicrosByResolution: { '1k': 300000, '2k': 550000, '4k': 850000 }
   });
   assert.equal(body.pricing.legacyTotalMultiplier, undefined);
   const publicNumbers = [];
