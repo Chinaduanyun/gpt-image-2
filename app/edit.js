@@ -129,13 +129,14 @@
     };
   };
 
-  // 组装最终 prompt：用户输入 +（开关开时）\n附加话术；两段任一为空则不拼接空行。
-  ns.buildEditPrompt = (userPrompt, annotation, appendEnabled) => {
-    const base = String(userPrompt || '').trim();
-    if (!appendEnabled) return base;
-    const note = String(annotation || '').trim();
-    if (!note) return base;
-    return base ? `${base}\n${note}` : note;
+  // 图序说明独立于标注话术开关；没有参考图时保持原有提示词。
+  ns.buildEditPrompt = (userPrompt, annotation, appendEnabled, referenceCount = 0) => {
+    const parts = [String(userPrompt || '').trim()];
+    if (appendEnabled) parts.push(String(annotation || '').trim());
+    if (referenceCount > 0) {
+      parts.push('图片用途：图 1 是待修改的底图（如有标注，标注已叠加在图上）；图 2 起是额外参考图，仅用于修改说明指定的内容或样式参考，不是待修改底图。请输出修改后的图 1，不要将多张输入图拼成拼贴图。');
+    }
+    return parts.filter(Boolean).join('\n');
   };
   // prompt 校验：非空 + 不超过 8000 字符（前端先拦截，避免提交后端再被拒）。
   ns.validateEditPrompt = (prompt) => {
@@ -155,14 +156,25 @@
     displayHeight: 0,
     image: null,
     strokes: [],
+    referenceImages: [],
+    referencesLoading: false,
+    imageLoading: false,
     tool: 'brush',
     color: ns.EDIT_COLORS[0].value,
     widthTier: ns.EDIT_DEFAULT_WIDTH_TIER
   });
   ns.resetEditState = () => {
     ns.state.edit = ns.createEditState();
+    if (ns.els?.editReferenceFileInput) ns.els.editReferenceFileInput.value = '';
+    if (ns.els?.editPrompt) ns.els.editPrompt.value = '';
+    ns.setEditReferenceStatus?.('');
   };
   ns.editHasImage = () => Boolean(ns.state.edit && ns.state.edit.image && ns.state.edit.naturalWidth);
+  ns.isEditLocked = () => Boolean(ns.state.isBusy || ns.hasPendingGeneration?.()
+    || ns.state.edit?.referencesLoading || ns.state.edit?.imageLoading);
+  ns.captureEditContext = () => ({ edit: ns.state.edit, epoch: ns.state.accountEpoch, token: ns.state.session?.token });
+  ns.isEditContextCurrent = (context) => context.edit === ns.state.edit
+    && context.epoch === ns.state.accountEpoch && context.token === ns.state.session?.token;
 
   ns.setEditStatus = (message, type = '') => {
     if (ns.els?.editStatus) ns.setStatusClass(ns.els.editStatus, 'status', message, type);
@@ -186,7 +198,8 @@
 
   ns.updateEditPromptStats = () => {
     if (!ns.els?.editPromptStats) return;
-    const composed = ns.buildEditPrompt(ns.els.editPrompt.value, ns.els.editAnnotationText.value, ns.els.editAppendToggle.checked);
+    const composed = ns.buildEditPrompt(ns.els.editPrompt.value, ns.els.editAnnotationText.value,
+      ns.els.editAppendToggle.checked, ns.state.edit?.referenceImages?.length || 0);
     const length = composed.length;
     ns.els.editPromptStats.textContent = length > 8000 ? `${length} 字（超出 8000）` : `${length} 字`;
   };
@@ -235,16 +248,19 @@
 
   // 依据 busy/pending 锁定编辑面板控件（与主生成共用 busy 锁，禁止并发两个任务）。
   ns.updateEditControls = () => {
-    const locked = Boolean(ns.state.isBusy || ns.hasPendingGeneration?.());
+    const locked = ns.isEditLocked();
     const hasImage = ns.editHasImage();
     if (ns.els?.editSubmitBtn) {
       ns.els.editSubmitBtn.disabled = locked || !hasImage;
-      ns.els.editSubmitBtn.textContent = locked ? '生成任务进行中...' : '生成修改图';
+      ns.els.editSubmitBtn.textContent = ns.state.edit?.referencesLoading || ns.state.edit?.imageLoading
+        ? '正在读取图片...' : (locked ? '生成任务进行中...' : '生成修改图');
     }
-    if (ns.els?.editUploadBtn) ns.els.editUploadBtn.disabled = locked;
-    if (ns.els?.editChangeImageBtn) ns.els.editChangeImageBtn.disabled = locked;
+    for (const key of ['editUploadBtn', 'editUploadInput', 'editChangeImageBtn', 'editModel', 'editAspectRatio', 'editResolution']) {
+      if (ns.els?.[key]) ns.els[key].disabled = locked;
+    }
     if (ns.els?.editUndoBtn) ns.els.editUndoBtn.disabled = locked || !ns.state.edit?.strokes?.length;
     if (ns.els?.editClearBtn) ns.els.editClearBtn.disabled = locked || !ns.state.edit?.strokes?.length;
+    ns.updateEditReferenceControls?.();
   };
 
   // ---- 载入图片 ----
@@ -262,12 +278,21 @@
   };
 
   ns.loadEditImage = (url, kind) => {
-    if (!ns.els?.editBaseCanvas) return;
+    if (!ns.els?.editBaseCanvas || ns.isEditLocked()) return;
+    if (ns.state.edit?.referenceImages?.length
+      && !window.confirm('更换底图会清空当前标注和编辑参考图，继续吗？')) return;
+    const context = ns.captureEditContext();
+    const hadReferences = Boolean(context.edit.referenceImages?.length);
+    context.edit.imageLoading = true;
+    ns.updateEditControls();
     ns.setEditStatus('正在载入图片...', 'loading');
     ns.setEditEmptyStatus('正在载入图片...', 'loading');
     const image = new Image();
     // 同源归档图与 data URL 都不需要 crossOrigin；设置反而可能触发 CORS 失败。
     image.onload = () => {
+      if (!ns.isEditContextCurrent(context)) return;
+      context.edit.imageLoading = false;
+      ns.updateEditControls();
       const edit = ns.createEditState();
       edit.sourceUrl = url;
       edit.sourceKind = kind;
@@ -279,12 +304,17 @@
         return;
       }
       ns.state.edit = edit;
+      if (ns.els?.editReferenceFileInput) ns.els.editReferenceFileInput.value = '';
+      ns.setEditReferenceStatus?.(hadReferences ? '已更换底图，旧参考图已清空，请重新添加。' : '');
       ns.renderEditor();
       ns.updateEditParamsNote();
       ns.setEditStatus('已载入图片，选好工具即可在图上标注。', 'ok');
       ns.setEditEmptyStatus('');
     };
     image.onerror = () => {
+      if (!ns.isEditContextCurrent(context)) return;
+      context.edit.imageLoading = false;
+      ns.updateEditControls();
       ns.setEditEmptyStatus('图片载入失败，可能未归档或网络中断。', 'error');
       ns.setEditStatus('图片载入失败。', 'error');
     };
@@ -293,6 +323,7 @@
 
   // 本地上传：限 image/*、≤20MB，经 FileReader 转 dataURL 载入（无污染）。
   ns.handleEditUpload = () => {
+    if (ns.isEditLocked()) return;
     const input = ns.els?.editUploadInput;
     const file = input?.files?.[0];
     if (!file) return;
@@ -306,14 +337,24 @@
       input.value = '';
       return;
     }
+    const context = ns.captureEditContext();
+    context.edit.imageLoading = true;
+    ns.updateEditControls();
     const reader = new FileReader();
     reader.onload = () => {
+      if (!ns.isEditContextCurrent(context)) return;
+      context.edit.imageLoading = false;
       input.value = '';
+      ns.updateEditControls();
       ns.loadEditImage(String(reader.result || ''), 'upload');
     };
     reader.onerror = () => {
+      if (!ns.isEditContextCurrent(context)) return;
+      context.edit.imageLoading = false;
       input.value = '';
+      ns.updateEditControls();
       ns.setEditEmptyStatus('图片读取失败，请重试。', 'error');
+      ns.setEditStatus('图片读取失败，请重试。', 'error');
     };
     reader.readAsDataURL(file);
   };
@@ -326,11 +367,13 @@
     ns.els?.editChangeImageBtn?.classList.toggle('hidden', !hasImage);
     if (hasImage) {
       if (ns.els?.editSourceNote) {
-        ns.els.editSourceNote.textContent = `原图 ${ns.state.edit.naturalWidth}×${ns.state.edit.naturalHeight} · ${ns.state.edit.sourceKind === 'upload' ? '本地上传' : '归档作品'}`;
+        ns.els.editSourceNote.textContent = `图 1 · 编辑底图 ${ns.state.edit.naturalWidth}×${ns.state.edit.naturalHeight} · ${ns.state.edit.sourceKind === 'upload' ? '本地上传' : '归档作品'}`;
       }
       ns.renderEditToolbarState?.();
       ns.sizeEditCanvases?.();
     }
+    ns.renderEditReferences?.();
+    ns.updateEditPromptStats();
     ns.updateEditControls();
   };
 
@@ -371,7 +414,7 @@
   };
   ns.getEditResolution = () => ns.els?.editResolution?.value || '1k';
 
-  // 以合成图为唯一参考图、编辑 prompt 为提示词，复用主生成的 runGeneration 提交/轮询/结果链路。
+  // 图 1 为合成底图，后续为编辑页参考图，复用 runGeneration 提交/轮询/结果链路。
   // n 固定 1；比例/清晰度用编辑 Tab 自己的控件；不使用/不清空生成 Tab 的参考图列表。
   ns.getEditSettings = (dataUrl, prompt) => {
     const settings = {
@@ -386,17 +429,22 @@
       settings.output_format = ns.els.outputFormat.value;
       if (ns.els.outputFormat.value !== 'png') settings.output_compression = Number(ns.els.outputCompression.value);
     }
-    settings.image_urls = [dataUrl];
+    settings.image_urls = [dataUrl, ...(ns.state.edit?.referenceImages || []).map((item) => item.value)];
     return settings;
   };
 
   ns.handleEditSubmit = async () => {
     if (!ns.state.session?.token) return ns.setEditStatus('请先登录。', 'error');
     if (ns.state.isBusy || ns.hasPendingGeneration()) return ns.setEditStatus('已有生成任务在进行，请等它安全结束后再提交。', 'error');
+    if (ns.isEditLocked()) return ns.setEditStatus('图片还在读取中，请稍候再提交。', 'error');
     if (!ns.editHasImage()) return ns.setEditStatus('请先上传或选择一张图片。', 'error');
     ns.syncGlobalModelFromEdit();
 
-    const composedPrompt = ns.buildEditPrompt(ns.els.editPrompt.value, ns.els.editAnnotationText.value, ns.els.editAppendToggle.checked);
+    const referenceCount = ns.state.edit.referenceImages.length;
+    const userPrompt = ns.buildEditPrompt(ns.els.editPrompt.value, ns.els.editAnnotationText.value, ns.els.editAppendToggle.checked);
+    if (!userPrompt) return ns.setEditStatus('请先输入修改说明。', 'error');
+    const composedPrompt = ns.buildEditPrompt(ns.els.editPrompt.value, ns.els.editAnnotationText.value,
+      ns.els.editAppendToggle.checked, referenceCount);
     const check = ns.validateEditPrompt(composedPrompt);
     if (!check.ok) return ns.setEditStatus(check.error, 'error');
     if (!ns.state.edit.strokes.length && !window.confirm('当前还没有任何标注，确认仅凭提示词修改整张图吗？')) return;
@@ -414,8 +462,14 @@
       return ns.setEditStatus(error?.message || '标注图合成失败。', 'error');
     }
     const settings = ns.getEditSettings(composed.dataUrl, check.prompt);
+    const imageError = ns.validateEditImagePayload(settings.image_urls);
+    if (imageError) return ns.setEditStatus(imageError, 'error');
+    if (ns.estimateRequestBodyBytes(settings) > ns.MAX_UPSTREAM_BODY_BYTES) {
+      return ns.setEditStatus('请求体超过 24MB 上限，请减少参考图或先压缩图片。', 'error');
+    }
     const costLabel = estimate.isMaximum ? `最高预扣 ${ns.formatMicros(estimate.unitMicros)}` : `预计 ${ns.formatMicros(estimate.unitMicros)}`;
-    if (!window.confirm(`将按标注生成 1 张修改图（${size} · ${resolution}），${costLabel}。确认提交吗？`)) {
+    const referenceNote = referenceCount ? `，附带 ${referenceCount} 张参考图` : '';
+    if (!window.confirm(`将按标注生成 1 张修改图（${size} · ${resolution}）${referenceNote}，${costLabel}。确认提交吗？`)) {
       ns.setEditStatus('已取消提交。');
       return;
     }
@@ -454,6 +508,7 @@
   };
 
   ns.bindEditEvents = () => {
+    ns.bindEditReferenceEvents?.();
     ns.els?.editUploadBtn?.addEventListener('click', () => ns.els.editUploadInput?.click());
     ns.els?.editChangeImageBtn?.addEventListener('click', () => ns.els.editUploadInput?.click());
     ns.els?.editUploadInput?.addEventListener('change', ns.handleEditUpload);

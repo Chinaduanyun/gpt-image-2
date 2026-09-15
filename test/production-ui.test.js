@@ -182,7 +182,7 @@ test('production page preserves selectable values, progress steps and asset orde
   assert.deepEqual(scripts, [
     './config.example.js', './app/state.js', './app/dom.js', './app/utils.js', './app/zip.js', './app/pricing.js',
     './app/auth.js', './app/references.js', './app/generation.js', './app/results.js', './app/history.js',
-    './app/admin.js', './app/edit.js', './app/edit-canvas.js', './app/main.js', './workspace-shell.js'
+    './app/admin.js', './app/edit.js', './app/edit-references.js', './app/edit-canvas.js', './app/main.js', './workspace-shell.js'
   ]);
 });
 
@@ -297,6 +297,7 @@ test('production assets are exact-allowlisted while preview and private paths ar
   assert.match(getStaticPath('/index.html'), /index\.html$/);
   assert.match(getStaticPath('/workspace.css'), /workspace\.css$/);
   assert.match(getStaticPath('/workspace-shell.js'), /workspace-shell\.js$/);
+  assert.match(getStaticPath('/app/edit-references.js'), /edit-references\.js$/);
   assert.equal(getStaticPath('/preview.html'), null);
   assert.equal(getStaticPath('/preview.css'), null);
   assert.equal(getStaticPath('/preview.js'), null);
