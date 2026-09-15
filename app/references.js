@@ -8,6 +8,12 @@
   const isAccountContextCurrent = (context) => context.epoch === ns.state.accountEpoch
     && context.ownerEmail === (ns.state.session?.user?.email || '');
 
+  ns.validateReferenceFile = (file) => {
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) return '仅支持 PNG、JPEG、WebP';
+    if (!file.size || file.size > ns.constants.MAX_REFERENCE_IMAGE_BYTES) return '图片不能为空，单张不超过 5MB';
+    return '';
+  };
+
   function fileToDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -16,6 +22,8 @@
       reader.readAsDataURL(file);
     });
   }
+
+  ns.referenceFileToDataUrl = fileToDataUrl;
 
   ns.addReferenceImage = (item) => {
     if (remainingSlots() <= 0) return false;
@@ -129,12 +137,9 @@
         rejected.push(`${label}：超过 16 张数量上限`);
         continue;
       }
-      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-        rejected.push(`${label}：仅支持 PNG、JPEG、WebP`);
-        continue;
-      }
-      if (file.size > ns.constants.MAX_REFERENCE_IMAGE_BYTES) {
-        rejected.push(`${label}：单张超过 5MB`);
+      const error = ns.validateReferenceFile(file);
+      if (error) {
+        rejected.push(`${label}：${error}`);
         continue;
       }
       if (totalReferenceBytes() + file.size > ns.constants.MAX_REFERENCE_TOTAL_BYTES) {
@@ -198,9 +203,13 @@
   // 生成中/待恢复（参考图上传被锁）时忽略。
   ns.handleReferencePaste = async (event) => {
     if (!ns.state.session?.token) return;
-    if (ns.els.referenceFileInput?.disabled) return;
     const files = clipboardImageFiles(event.clipboardData || window.clipboardData);
     if (!files.length) return;
+    if (window.location.hash?.toLowerCase() === '#edit') {
+      await ns.addEditReferenceFiles?.(files);
+      return;
+    }
+    if (ns.els.referenceFileInput?.disabled) return;
     const { added, rejected, aborted } = await ns.addReferenceFileList(files);
     if (aborted) return;
     ns.renderReferences();

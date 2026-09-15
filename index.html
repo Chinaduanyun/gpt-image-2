@@ -419,12 +419,31 @@
             </div>
           </div>
           <div id="editParamsNote" class="mini-note"></div>
+          <section class="reference-card preview-reference-card preview-edit-reference-card" aria-labelledby="editReferenceTitle">
+            <div class="label-row">
+              <span id="editReferenceTitle" class="preview-section-label">参考图（可选）</span>
+              <span id="editReferenceCount" class="mini-note">0/15 张</span>
+            </div>
+            <p class="field-note">图 1 是编辑底图；图 2 起仅作内容或样式参考，不会叠加到画布上。</p>
+            <div class="reference-layout">
+              <div class="reference-controls">
+                <input id="editReferenceFileInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+                <div class="preview-reference-actions">
+                  <button id="editReferenceUploadBtn" class="secondary compact" type="button">＋ 添加参考图</button>
+                  <button id="editClearReferencesBtn" class="secondary compact" type="button">清空</button>
+                </div>
+                <p class="field-note">支持上传或粘贴 PNG、JPEG、WebP，单张 ≤ 5MB，含底图合计 ≤ 18MB。更换底图会清空参考图。</p>
+                <div id="editReferenceStatus" class="status reference-status" aria-live="polite"></div>
+              </div>
+              <div id="editReferencePreviewGrid" class="input-preview-grid reference-preview-grid hidden"></div>
+            </div>
+          </section>
           <div class="field field-prompt">
             <div class="label-row">
               <label for="editPrompt">修改说明</label>
               <span id="editPromptStats" class="mini-note">0 字</span>
             </div>
-            <textarea id="editPrompt" placeholder="例如：把绿色圈出的那道菜换成一盘汤圆。"></textarea>
+            <textarea id="editPrompt" placeholder="例如：把图 1 绿色圈出的椅子换成图 2 中的款式，其他区域不变。"></textarea>
           </div>
           <label class="notify-toggle" id="editAppendField">
             <input id="editAppendToggle" type="checkbox" checked />
@@ -570,6 +589,7 @@
   <script src="./app/history.js"></script>
   <script src="./app/admin.js"></script>
   <script src="./app/edit.js"></script>
+  <script src="./app/edit-references.js"></script>
   <script src="./app/edit-canvas.js"></script>
   <script src="./app/main.js"></script>
   <script src="./workspace-shell.js"></script>
