@@ -22,7 +22,7 @@
     const hasRootTask = Boolean(log.taskId || log.task_id || log.batchId || log.batch_id);
     const children = Array.isArray(log.children) ? log.children : [];
     const hasChildTask = children.some((child) => child.taskId || child.task_id || child.batchId || child.batch_id);
-    return log.type === 'generation' && status === 'submission_unknown' && !hasRootTask && !hasChildTask && log.settled !== true;
+    return log.type === 'generation' && status === 'submission_unknown' && (log.billingVersion === 'fixed-quote-v2' || (!hasRootTask && !hasChildTask)) && log.settled !== true;
   };
   ns.renderAdminLogs = (logs) => {
     ns.els.adminLogsBody.innerHTML = logs.map((log) => {

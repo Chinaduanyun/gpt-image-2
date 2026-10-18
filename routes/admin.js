@@ -132,7 +132,7 @@ async function handleAdmin(req, res, pathname, url) {
     const refreshedData = loadDataStore();
     logs = refreshedData.spendLogs.slice().reverse();
     if (email) logs = logs.filter((log) => log.email === email);
-    sendJson(res, 200, { logs: logs.slice(offset, offset + limit) });
+    sendJson(res, 200, { logs: logs.slice(offset, offset + limit).map(require('../lib/image-task-runner').publicLog) });
     return;
   }
 
@@ -148,7 +148,7 @@ async function handleAdmin(req, res, pathname, url) {
       const resolution = closeSubmissionUnknownWithRefund(latestData, log, latestAuth.email, body.reason);
       if (!resolution.ok) {
         if (log.resolution?.action === 'admin_refund_and_close') {
-          return { log: { ...log }, refundMicros: Number(log.resolution.refundMicros) || 0, idempotent: true };
+          return { log: require('../lib/image-task-runner').publicLog(log), refundMicros: Number(log.resolution.refundMicros) || 0, idempotent: true };
         }
         return { conflict: true };
       }
@@ -159,7 +159,7 @@ async function handleAdmin(req, res, pathname, url) {
         balanceBeforeMicros: resolution.balanceBeforeMicros, balanceAfterMicros: resolution.balanceAfterMicros,
         createdAt: resolution.timestamp
       });
-      return { log: { ...log }, refundMicros: resolution.refundMicros };
+      return { log: require('../lib/image-task-runner').publicLog(log), refundMicros: resolution.refundMicros };
     });
     if (result.auth) { sendAuthError(res, result.auth); return; }
     if (result.notFound) { sendJson(res, 404, { error: { message: '记录不存在。' } }); return; }

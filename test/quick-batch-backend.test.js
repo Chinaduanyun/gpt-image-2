@@ -359,6 +359,41 @@ test('batch polling is account-isolated before any child refresh', { concurrency
   });
 });
 
+test('history excludes ledger entries before grouping and pagination without changing money or audit records', { concurrency: false }, async () => {
+  await withDataDir(async () => {
+    const data = seedStore({ balanceMicros: 100000000, secondUser: true });
+    const batch = makeBatchLogs(2, 'history_batch');
+    batch.forEach((log) => { log.status = 'completed'; log.settled = true; });
+    const generation = { id: 'standalone', type: 'generation', email: 'user@example.com', status: 'completed', settled: true, createdAt: '2026-07-11T00:00:00Z' };
+    const adjustment = { id: 'adjustment', type: 'balance_adjustment', email: 'user@example.com', deltaMicros: 100000000, balanceBeforeMicros: 0, balanceAfterMicros: 100000000, createdAt: '2026-07-15T00:00:00Z' };
+    data.spendLogs.push(adjustment,
+      { ...adjustment, id: 'future-ledger', type: 'refund' },
+      { ...generation, id: 'hidden', hiddenFromHistory: true },
+      { ...generation, id: 'other', email: 'other@example.com' },
+      ...batch, generation);
+    saveDataStore(data);
+    const before = JSON.stringify(data);
+    const storedBefore = fs.readFileSync(path.join(process.env.DATA_DIR, 'app-data.json'), 'utf8');
+    const history = getLogsForEmail(data, 'user@example.com');
+    assert.deepEqual(history.map((log) => log.id), ['standalone', 'history_batch']);
+    assert.equal(history[1].type, 'generation');
+    assert.equal(history[1].kind, 'batch');
+    assert.equal(history[1].children.length, 2);
+    assert.deepEqual(getLogsForEmail(data, 'user@example.com', 1, 0).map((log) => log.id), ['standalone']);
+    assert.deepEqual(getLogsForEmail(data, 'user@example.com', 1, 1).map((log) => log.id), ['history_batch']);
+    assert.deepEqual(getLogsForEmail(data, 'user@example.com', 1, 2), []);
+    assert.deepEqual(getLogsForEmail({ ...data, spendLogs: [adjustment] }, 'user@example.com'), []);
+    assert.equal(JSON.stringify(data), before);
+    assert.equal(fs.readFileSync(path.join(process.env.DATA_DIR, 'app-data.json'), 'utf8'), storedBefore);
+    const res = responseCapture();
+    await handleMe(request('DELETE'), res, '/api/me/logs/adjustment', new URL('http://localhost/api/me/logs/adjustment'));
+    assert.equal(res.statusCode, 404);
+    const stored = loadDataStore();
+    assert.equal(stored.users['user@example.com'].balanceMicros, 100000000);
+    assert.deepEqual(stored.spendLogs, data.spendLogs);
+  });
+});
+
 test('history groups batch members, tombstones a settled batch, retains audit logs and rejects unsettled deletion', { concurrency: false }, async () => {
   await withDataDir(async (dataDir) => {
     const data = seedStore();
@@ -390,7 +425,7 @@ test('history groups batch members, tombstones a settled batch, retains audit lo
     const tombstones = stored.spendLogs.filter((log) => log.batchId === 'settled_batch');
     assert.equal(tombstones.length, 2);
     assert.equal(tombstones.every((log) => log.hiddenFromHistory === true), true);
-    assert.equal(tombstones.every((log) => log.cleanupStatus === 'cleanupComplete'), true);
+    assert.equal(tombstones.every((log) => log.cleanupStatus === 'retained'), true);
     assert.equal(getLogsForEmail(stored, 'user@example.com').some((item) => item.batchId === 'settled_batch'), false);
     assert.equal(fs.existsSync(path.join(dataDir, 'app-data.json')), true);
 
@@ -444,8 +479,9 @@ test('partial multi-image archival preserves slot order, retries missing files, 
 
       const hidden = { ...log, hiddenFromHistory: true, status: 'completed' };
       assert.equal(logNeedsRefresh(hidden), false);
-      assert.equal(mergeArchivedImages(hidden, { imageUrls: ['/new.png'], remoteImageUrls: urls, imageFiles: [] }), false);
-      assert.deepEqual(hidden.imageUrls, log.imageUrls);
+      assert.equal(mergeArchivedImages(hidden, { imageUrls: ['/new.png'], remoteImageUrls: urls, imageFiles: log.imageFiles }), true);
+      assert.deepEqual(hidden.imageUrls, ['/new.png']);
+      assert.equal(mergeArchivedImages({ ...hidden, assetsDeletedAt: new Date().toISOString() }, { imageUrls: ['/resurrect.png'], imageFiles: [] }), false);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -550,3 +586,37 @@ test('refunded closed single generation history is terminal and can be hidden', 
   });
 });
 
+
+
+test('legacy hide retains files and explicit deletion blocks refresh and task URL resurrection', async () => {
+  await withDataDir(async (dir) => {
+    const data = seedStore();
+    fs.mkdirSync(path.join(dir, 'images'));
+    fs.writeFileSync(path.join(dir, 'images/legacy.png'), 'retained');
+    const log = { id: 'legacy', type: 'generation', email: 'user@example.com', taskId: 'legacy-upstream', status: 'completed', settled: true, chargedMicros: 100, imageFiles: [{ fileName: 'legacy.png' }], imageUrls: ['/api/stored-images/legacy.png'], remoteImageUrls: ['https://example.invalid/old.png'] };
+    data.spendLogs.push(log); saveDataStore(data);
+    const hidden = responseCapture();
+    await handleMe(request('DELETE'), hidden, '/api/me/logs/legacy', new URL('http://localhost/api/me/logs/legacy'));
+    assert.equal(hidden.statusCode, 200);
+    assert.equal(fs.readFileSync(path.join(dir, 'images/legacy.png'), 'utf8'), 'retained');
+    assert.equal(loadDataStore().spendLogs[0].chargedMicros, 100);
+    const deleted = responseCapture();
+    await handleMe(request('DELETE', undefined, 'userToken', { 'x-confirm-delete': 'permanent' }), deleted, '/api/me/logs/legacy/assets', new URL('http://localhost/api/me/logs/legacy/assets'));
+    assert.equal(deleted.statusCode, 200); assert.equal(fs.existsSync(path.join(dir, 'images/legacy.png')), false);
+    const current = loadDataStore().spendLogs[0];
+    assert.ok(current.assetsDeletedAt); assert.deepEqual(current.remoteImageUrls, []);
+    assert.equal(logNeedsRefresh(current), false);
+    assert.equal(applyTaskJsonToLog(loadDataStore(), current, { data: { status: 'completed', result: { images: [{ url: 'https://example.invalid/reappear.png' }] } } }), false);
+    assert.equal(mergeArchivedImages(current, { imageUrls: ['/resurrect.png'], imageFiles: [] }), false);
+    const queried = responseCapture();
+    await require('../routes/api-market').handleTask(request('GET'), queried, '/api/api-market/v1/tasks/legacy-upstream', CONFIG);
+    assert.equal(queried.statusCode, 200); assert.deepEqual(JSON.parse(queried.body).imageUrls, []);
+    assert.equal(current.chargedMicros, 100);
+  });
+});
+test('closed refunded batch children count as terminal failures', () => {
+  const logs = makeBatchLogs(2, 'closed_batch');
+  logs.forEach((log) => { log.status = 'submission_refunded_closed'; log.settled = true; log.chargedMicros = 0; });
+  const dto = batchDto(logs);
+  assert.equal(dto.status, 'failed'); assert.equal(dto.counts.failed, 2); assert.equal(dto.counts.processing, 0);
+});

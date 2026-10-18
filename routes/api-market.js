@@ -1,3 +1,5 @@
+const hybrid = require('../lib/image-task-runner');
+const { assertCapacity } = require('../lib/image-assets');
 const { API_PREFIX, GENERATION_BODY_LIMIT, QUICK_BATCH_ENABLED } = require('../lib/constants');
 const { nowIso, createId, decodePathPart, canonicalPayloadHash, getIdempotencyKeyInfo } = require('../lib/common');
 const { send, sendJson, readRequestBody, safeParseJson, isResponseWritable } = require('../lib/http-utils');
@@ -13,6 +15,7 @@ const {
   parseJsonText,
   extractTaskId,
   extractImageUrls,
+  clearImageUrls,
   getTaskStatus,
   sanitizeErrorMessage,
   toApiMarketGenerationPayload
@@ -30,10 +33,10 @@ const {
   needsTerminalSettlementBackoff,
   markStaleSubmittingUnknown
 } = require('../lib/spend-logs');
-const { hasCompleteImageArchive, deleteStoredImageFiles } = require('../lib/image-store');
+const { hasCompleteImageArchive, deleteStoredImageFiles, isLocalStoredImageUrl } = require('../lib/image-store');
 
 const SUCCESS_STATUSES = new Set(['completed', 'succeeded', 'success']);
-const FAILURE_STATUSES = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded']);
+const FAILURE_STATUSES = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded', 'submission_refunded_closed']);
 const UNKNOWN_STATUSES = new Set(['submission_unknown', 'attention_required', 'unknown']);
 
 async function forwardApiMarketResponse(upstream, res, extra = null) {
@@ -274,21 +277,50 @@ function aggregateBatchBilling(children) {
   };
 }
 
+// settings is a client-request echo, but once its log is tombstoned no field of it may
+// keep pointing at an asset that was just deleted, so asset-bearing keys and any value
+// that still references a stored-image address are dropped before the spread.
+const DELETED_SETTINGS_KEYS = new Set([
+  'image_urls', 'imageUrls', 'image_files', 'imageFiles', 'input_files', 'inputFiles', 'mask', 'mask_url'
+]);
+const STORED_IMAGE_URL_PREFIX = '/api/stored-images/';
+function sanitizeSettingsForDeleted(settings) {
+  if (!settings || typeof settings !== 'object') return {};
+  const output = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (DELETED_SETTINGS_KEYS.has(key)) continue;
+    if (typeof value === 'string' && value.includes(STORED_IMAGE_URL_PREFIX)) continue;
+    output[key] = value;
+  }
+  return output;
+}
+
 function childDto(child) {
-  return {
+  // A tombstoned child is normalized to its canonical no-asset form before any of its
+  // fields are read, so neither this DTO nor the batch-level aggregation below can echo
+  // a deleted address or a deleted file record.
+  const deleted = child?.assetsDeletedAt ? deletedTaskDto(child) : null;
+  const dto = {
     index: Number.isSafeInteger(child.batchIndex) ? child.batchIndex : 0,
     status: child.status,
     taskId: child.taskId || '',
     task_id: child.taskId || '',
-    imageUrl: child.imageUrls?.[0] || '',
-    imageUrls: child.imageUrls || [],
-    error: child.error || '',
+    imageUrl: deleted ? '' : (child.imageUrls?.[0] || ''),
+    imageUrls: deleted ? [] : (child.imageUrls || []),
+    imageFiles: deleted ? [] : (child.imageFiles || []),
+    inputFiles: deleted ? [] : (child.inputFiles || []),
+    archiveStatus: child.archiveStatus,
+    error: deleted ? deleted.error : (child.error || ''),
     billing: getBillingSummary(child)
   };
+  return deleted ? { ...dto, remoteImageUrls: deleted.remoteImageUrls, assetsDeleted: true } : dto;
 }
 
 function batchDto(input) {
   const children = sortBatchLogs(Array.isArray(input) ? input : []);
+  // Every aggregate field is computed from the tombstone-normalized children, so the
+  // batch list cannot re-expose what an individual permanent delete removed.
+  const childDtos = children.map(childDto);
   const first = children[0] || {};
   const counts = batchCounts(children);
   const billing = aggregateBatchBilling(children);
@@ -314,11 +346,14 @@ function batchDto(input) {
     model: first.model || '',
     prompt: first.prompt || '',
     referenceImageCount: first.referenceImageCount || 0,
-    settings: { ...(first.settings || {}), n: Number(first.batchSize) || children.length || 1 },
+    billingVersion: first.billingVersion,
+    imageFiles: childDtos.flatMap((child) => child.imageFiles || []),
+    inputFiles: childDtos.flatMap((child) => child.inputFiles || []),
+    settings: { ...(first.assetsDeletedAt ? sanitizeSettingsForDeleted(first.settings) : (first.settings || {})), n: Number(first.batchSize) || children.length || 1 },
     requestedCount: Number(first.batchSize) || children.length || 1,
     counts,
-    children: children.map(childDto),
-    imageUrls: children.flatMap((child) => child.imageUrls || []).filter(Boolean),
+    children: childDtos,
+    imageUrls: childDtos.flatMap((child) => child.imageUrls || []).filter(Boolean),
     aggregateBilling: billing,
     billing,
     estimatedCostMicros: billing.estimatedCostMicros,
@@ -352,7 +387,78 @@ function slimSubmitResponse(json) {
   return slim;
 }
 
+// Canonical no-asset DTO for a permanently deleted task. It is built from explicit
+// fields only and never spreads submitResponse, so a stale upstream echo cannot leak a
+// deleted image address back into task responses or duplicate replays.
+function deletedTaskDto(log) {
+  if (log.billingVersion === hybrid.BILLING_VERSION) return hybrid.publicTask(log);
+  return {
+    kind: 'task',
+    taskId: log.taskId || '',
+    task_id: log.taskId || '',
+    ...clientRequestFields(log),
+    status: log.status,
+    error: log.error || '',
+    imageUrls: [],
+    imageFiles: [],
+    inputFiles: [],
+    remoteImageUrls: [],
+    archiveStatus: log.archiveStatus,
+    assetsDeleted: true,
+    billing: getBillingSummary(log)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Single tombstone funnel for every final exit on the API Market side.
+//
+// A permanent delete can land while a query/submit is in flight, and the decision
+// "is this record tombstoned?" must therefore be re-made against the store at the
+// moment of the final write, never from a pre-delete snapshot. These two helpers are
+// the only place that decision is made, so no exit can be forgotten:
+//   1. handleTask pre-upstream 429 backoff reply
+//   2. handleTask deduped-request error (rethrown to the global handler)
+//   3. handleTask 2xx JSON answer
+//   4. handleTask non-2xx JSON echo and the raw upstream forward (shared guard)
+//   5. handleGeneration duplicate/replay replies and GET /v1/batches/<id>, which answer
+//      through batchDto/taskDto - both normalize every tombstoned record first.
+// ---------------------------------------------------------------------------
+async function latestTaskRecord(taskId) {
+  return withDataStoreMutation((latestData) => {
+    const current = findSpendLogByTaskId(latestData, taskId);
+    return current ? { ...current } : null;
+  });
+}
+
+// Answers the canonical deleted DTO and reports whether it took over the response.
+// A non-writable response still counts as handled: nothing may be sent afterwards.
+function answerIfTombstoned(res, log) {
+  if (!log?.assetsDeletedAt) return false;
+  if (!isResponseWritable(res)) return true;
+  sendJson(res, 200, deletedTaskDto(log));
+  return true;
+}
+
+// Permanent deletion writes the tombstone, and that same mutation must also drop the
+// persisted upstream submit echo: the legacy taskDto and the history/list DTOs spread it
+// verbatim, so leaving it in place keeps the deleted address readable on every one of
+// those paths. Only identity/status is kept, under a separate field with no address, so
+// the admin channel still has raw-record context for a tombstoned task.
+function neutralizeSubmitEcho(log) {
+  const echo = log?.submitResponse;
+  if (echo && typeof echo === 'object') {
+    log.deletedSubmitEcho = {
+      task_id: extractTaskId(echo) || log.taskId || '',
+      status: getTaskStatus(echo) || '',
+      assetsDeleted: true
+    };
+  }
+  delete log.submitResponse;
+}
+
 function taskDto(log) {
+  if (log.assetsDeletedAt) return deletedTaskDto(log);
+  if (log.billingVersion === hybrid.BILLING_VERSION) return hybrid.publicTask(log);
   if (log.submitResponse && typeof log.submitResponse === 'object') {
     return { ...log.submitResponse, kind: 'task', taskId: log.taskId || '', task_id: log.taskId || '', ...clientRequestFields(log), status: log.status, billing: getBillingSummary(log) };
   }
@@ -400,19 +506,24 @@ async function handleGeneration(req, res, config) {
   let payload;
   try {
     const body = await readRequestBody(req, GENERATION_BODY_LIMIT);
-    payload = sanitizeGenerationPayload(safeParseJson(body), config);
+    const rawPayload = safeParseJson(body);
+    if (hybrid.enabled() && rawPayload.bestEffortAccepted !== true) throw new Error('请先确认固定报价及尽力满足规格说明。');
+    payload = sanitizeGenerationPayload(rawPayload, config);
   } catch (error) {
     sendJson(res, 400, { error: { message: error instanceof SyntaxError ? '请求 JSON 格式无效。' : (error.message || '生成参数无效。') } });
     return;
   }
 
+  if (hybrid.enabled()) {
+    try { assertCapacity(); } catch (error) { sendJson(res, 507, { error: { message: error.message } }); return; }
+  }
   const upstreamBaseUrl = getApiMarketBaseUrl(config);
   if (!upstreamBaseUrl.ok) {
     sendJson(res, 500, { error: { message: upstreamBaseUrl.error } });
     return;
   }
 
-  const isQuickBatch = payload.model === 'gpt-image-2' && payload.n > 1;
+  const isQuickBatch = payload.n > 1 && (hybrid.enabled() || payload.model === 'gpt-image-2');
 
   if (isQuickBatch && !suppliedClientRequestId) {
     sendJson(res, 400, { error: { code: 'idempotency_key_required', message: '快速批量生成必须提供 Idempotency-Key。' } });
@@ -465,6 +576,7 @@ async function handleGeneration(req, res, config) {
     user.updatedAt = timestamp;
     if (isQuickBatch) {
       const logs = createBatchLogs({ batchId, email: auth.email, payload, childCost, balanceBefore, clientRequestId, requestHash, timestamp });
+      if (hybrid.enabled()) logs.forEach(hybrid.initializeHybridLog);
       latestData.spendLogs.push(...logs);
       return { ok: true, batchId, logs };
     }
@@ -479,6 +591,7 @@ async function handleGeneration(req, res, config) {
       requestHash,
       timestamp
     });
+    if (hybrid.enabled()) hybrid.initializeHybridLog(log);
     latestData.spendLogs.push(log);
     return { ok: true, log };
   });
@@ -496,6 +609,12 @@ async function handleGeneration(req, res, config) {
     return;
   }
 
+  if (hybrid.enabled()) {
+    const logs = precharge.logs || [precharge.log];
+    for (const log of logs) hybrid.startTask(log.id, { ...payload, n: 1 }).catch(() => {});
+    sendJson(res, 202, isQuickBatch ? batchDto(logs) : taskDto(logs[0]));
+    return;
+  }
   const headers = { ...getApiHeaders(config), 'Content-Type': 'application/json' };
   if (isQuickBatch) {
     const upstreamPayload = toApiMarketGenerationPayload({ ...payload, n: 1 });
@@ -616,9 +735,16 @@ async function handleTask(req, res, pathname, config) {
     sendJson(res, 403, { error: { message: '不能查询其他用户的任务。' } });
     return;
   }
+  if (taskLog.assetsDeletedAt) { sendJson(res, 200, { kind: 'task', taskId: taskLog.taskId, status: taskLog.status, imageUrls: [], assetsDeleted: true, billing: getBillingSummary(taskLog) }); return; }
+  if (taskLog.billingVersion === hybrid.BILLING_VERSION) { sendJson(res, 200, hybrid.publicTask(taskLog)); return; }
   const nextRefreshAt = Date.parse(taskLog.nextRefreshAt || '');
   if (Number.isFinite(nextRefreshAt) && nextRefreshAt > Date.now()) {
-    const retrySeconds = Math.max(1, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+    // Exit 1: a backoff reply is a final exit too. A delete that completed while the
+    // task was backed off must answer with the tombstone, not a retry hint.
+    const backedOff = await latestTaskRecord(decodedTaskId);
+    if (answerIfTombstoned(res, backedOff)) return;
+    const backedOffUntil = Date.parse(backedOff?.nextRefreshAt || '');
+    const retrySeconds = Math.max(1, Math.ceil(((Number.isFinite(backedOffUntil) ? backedOffUntil : nextRefreshAt) - Date.now()) / 1000));
     if (!isResponseWritable(res)) return;
     send(res, 429, JSON.stringify({ error: { message: '状态查询正在退避，请稍后重试。' } }), 'application/json; charset=utf-8', {
       'Retry-After': String(retrySeconds)
@@ -630,11 +756,15 @@ async function handleTask(req, res, pathname, config) {
   try {
     upstream = await requestTaskDeduped(decodedTaskId, config);
   } catch (error) {
-    await withDataStoreMutation((latestData) => {
+    const errorLog = await withDataStoreMutation((latestData) => {
       const latestLog = findSpendLogByTaskId(latestData, decodedTaskId);
-      if (!latestLog) return;
+      if (!latestLog) return null;
       scheduleRefreshBackoff(latestLog, sanitizeErrorMessage(error));
+      return { ...latestLog };
     });
+    // Exit 2: an in-flight failure must not carry the pre-delete record out through the
+    // global error handler either.
+    if (answerIfTombstoned(res, errorLog)) return;
     throw error;
   }
   const taskJson = parseJsonText(upstream.text);
@@ -659,7 +789,9 @@ async function handleTask(req, res, pathname, config) {
       return { ...latestLog };
     });
     const remoteUrls = extractImageUrls(taskJson);
-    if (latestLog?.status === 'completed' && remoteUrls.length && !hasCompleteImageArchive(latestLog, remoteUrls)) {
+    // Never re-archive for a tombstoned task: its assets are gone on purpose, and the
+    // upload attempt would both resurrect bytes and waste the download.
+    if (latestLog?.status === 'completed' && !latestLog.assetsDeletedAt && remoteUrls.length && !hasCompleteImageArchive(latestLog, remoteUrls)) {
       const archived = await archiveImagesOutsideMutation(latestLog, remoteUrls);
       const mergeResult = await withDataStoreMutation((latestData) => {
         const currentLog = findSpendLogByTaskId(latestData, decodedTaskId);
@@ -669,11 +801,24 @@ async function handleTask(req, res, pathname, config) {
       if (!mergeResult.merged) deleteStoredImageFiles(archived);
       latestLog = mergeResult.merged ? { ...mergeResult.log, ...archived } : mergeResult.log;
     }
+    // The upstream query above can take a long time, and a permanent delete may land
+    // while it is in flight. Re-read the tombstone LAST and answer from it, never from
+    // the pre-delete snapshot, or the deleted address would be replayed to the client.
+    const finalLog = await latestTaskRecord(decodedTaskId);
+    if (answerIfTombstoned(res, finalLog)) return;
+    if (finalLog) latestLog = finalLog;
     if (latestLog) {
-      replaceTaskJsonImageUrls(taskJson, latestLog.imageUrls || []);
+      // Empty urls must clear the upstream images too: replaceTaskJsonImageUrls returns
+      // the upstream body untouched for an empty list, so guard it with an explicit wipe.
+      if (!(latestLog.imageUrls || []).length) clearImageUrls(taskJson);
+      else replaceTaskJsonImageUrls(taskJson, latestLog.imageUrls);
       taskJson.billing = getBillingSummary(latestLog);
     }
   }
+  // Exit 4: the non-2xx JSON echo and the raw upstream forward below are the last two
+  // ways the upstream body can reach the client, so they share one tombstone guard. A
+  // 500 whose body carries an image address must not be replayed after a permanent delete.
+  if (answerIfTombstoned(res, await latestTaskRecord(decodedTaskId))) return;
   if (taskJson) {
     if (!isResponseWritable(res)) return;
     send(res, upstream.status, JSON.stringify(taskJson), upstream.contentType, upstream.retryAfter ? { 'Retry-After': upstream.retryAfter } : {});
@@ -715,7 +860,7 @@ async function proxyApiMarket(req, res, pathname) {
     await handleBatch(req, res, pathname, config);
     return;
   }
-  if (!config.apiKey.trim()) {
+  if (!hybrid.enabled() && !config.apiKey.trim()) {
     sendJson(res, 500, { error: { message: '请先配置 API_MARKET_API_KEY / APIMARKET_API_KEY，或在 config.local.js 中配置 API Market Key。' } });
     return;
   }
@@ -749,6 +894,10 @@ module.exports = {
   batchDto,
   slimSubmitResponse,
   taskDto,
+  deletedTaskDto,
+  latestTaskRecord,
+  answerIfTombstoned,
+  neutralizeSubmitEcho,
   existingGenerationsByClientRequest,
   handleGeneration,
   handleTask,

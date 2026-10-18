@@ -368,7 +368,7 @@ test('account reset clears prompt and reference payloads', () => {
   assert.equal(ns.state.referenceImages.length, 0);
 });
 
-test('history renders child order and only offers tombstone action for terminal settled batches', () => {
+function historyHarness() {
   const ns = {
     state: { myLogs: [], historySearch: '', historyFilter: 'all' },
     els: { myLogsList: element() },
@@ -381,6 +381,71 @@ test('history renders child order and only offers tombstone action for terminal 
     hasPendingGeneration: () => false
   };
   loadScript(ns, 'app/history.js');
+  return ns;
+}
+
+const historyFilters = ['all', 'completed', 'failed', 'partial', 'active', 'with-reference'];
+const nonWorks = [
+  { id: 'ledger', type: 'balance_adjustment', kind: 'batch', status: 'completed', prompt: 'ledger-only', imageUrls: ['/ledger.png'], referenceImageCount: 1 },
+  { id: 'other', type: 'refund', kind: 'task', status: 'failed' },
+  { id: 'missing', status: 'processing' },
+  { id: 'empty', type: '', kind: '' },
+  { id: 'whitespace', type: '  ', kind: 'batch' }
+];
+
+test('history with only ledger or blank types stays empty for every filter and search', () => {
+  const ns = historyHarness();
+  for (const logs of [[], [nonWorks[0]], nonWorks]) {
+    for (const filter of historyFilters) {
+      for (const query of ['', 'ledger-only', 'not-found']) {
+        ns.state.historyFilter = filter;
+        ns.state.historySearch = query;
+        ns.renderMyLogs(logs);
+        assert.equal(ns.getFilteredMyLogs().length, 0);
+        assert.match(ns.els.myLogsList.innerHTML, /暂无作品/);
+        assert.doesNotMatch(ns.els.myLogsList.innerHTML, /没有匹配|history-row|history-empty|data-history-action/);
+      }
+    }
+  }
+  assert.equal(ns.logStatusText(nonWorks[0]), '余额调整');
+  assert.match(ns.costText({ ...nonWorks[0], deltaMicros: 123 }), /调整 micros:123/);
+});
+
+test('history excludes non-works but preserves batch DTO and kind-only batch/task', () => {
+  const ns = historyHarness();
+  const works = [
+    { id: 'dto', type: 'generation', kind: 'batch', batchId: 'batch_real', status: 'processing', requestedCount: 1, children: [{ index: 0, taskId: 'child_real', status: 'processing' }], imageUrls: [] },
+    { id: 'kind-batch', kind: 'batch', status: 'completed', imageUrls: ['/ok.png'] },
+    { id: 'kind-task', kind: 'task', status: 'failed', imageUrls: [] },
+    { id: 'generation', type: 'generation', status: 'completed', imageUrls: [] }
+  ];
+  ns.renderMyLogs([...nonWorks, ...works]);
+  assert.deepEqual(Array.from(ns.getFilteredMyLogs(), (log) => log.id), works.map((log) => log.id));
+  assert.equal((ns.els.myLogsList.innerHTML.match(/class="history-row"/g) || []).length, 4);
+  assert.doesNotMatch(ns.els.myLogsList.innerHTML, /ledger-only|ledger.png/);
+  assert.match(ns.els.myLogsList.innerHTML, /child_real|子任务详情/);
+  assert.doesNotMatch(ns.els.myLogsList.innerHTML, /data-history-action="delete"/);
+  for (const filter of historyFilters) {
+    ns.state.historyFilter = filter;
+    assert.ok(ns.getFilteredMyLogs().every((log) => works.includes(log)));
+  }
+  ns.state.historyFilter = 'all';
+  ns.state.historySearch = 'batch_real';
+  assert.deepEqual(Array.from(ns.getFilteredMyLogs(), (log) => log.id), ['dto']);
+  for (const query of ['not-found', 'ledger-only']) {
+    ns.state.historySearch = query;
+    ns.renderMyLogs();
+    assert.match(ns.els.myLogsList.innerHTML, /没有匹配的作品/);
+    assert.doesNotMatch(ns.els.myLogsList.innerHTML, /暂无作品|history-row/);
+  }
+  ns.state.historySearch = '';
+  ns.state.historyFilter = 'partial';
+  ns.renderMyLogs();
+  assert.match(ns.els.myLogsList.innerHTML, /没有匹配的作品/);
+});
+
+test('history renders child order and only offers tombstone action for terminal settled batches', () => {
+  const ns = historyHarness();
   ns.renderMyLogs([
     {
       id: 'settled', type: 'generation', status: 'partial_success', settled: true, requestedCount: 3,
@@ -435,4 +500,13 @@ test('official and legacy task responses remain single-task compatible', () => {
   assert.equal(legacy.kind, 'task');
   assert.equal(legacy.taskId, 'legacy_task');
   assert.deepEqual(Array.from(legacy.imageUrls), ['/legacy.png']);
+});
+
+
+test('closed refunded children normalize as failed rather than processing', () => {
+  const ns = { state: {}, toErrorText: () => '' };
+  loadScript(ns, 'app/generation.js');
+  const result = ns.normalizeBatchResult({ batchId: 'closed', requestedCount: 1, status: 'failed', children: [{ index: 0, taskId: 'local_1', status: 'submission_refunded_closed' }] });
+  assert.equal(result.counts.failed, 1);
+  assert.equal(result.counts.processing, 0);
 });

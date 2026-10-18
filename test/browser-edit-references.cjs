@@ -62,6 +62,7 @@ execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyo
     const asset = await fetch(`${base}/app/edit-references.js`);
     assert.equal(asset.status, 200, 'new module must be served by the static allowlist');
     const launchOptions = { headless: true };
+    if (process.env.QA_BROWSER_EXECUTABLE) launchOptions.executablePath = process.env.QA_BROWSER_EXECUTABLE;
     if (process.env.QA_COMPACT_CHROMIUM === '1') {
       const compact = require('@sparticuz/chromium');
       launchOptions.executablePath = await compact.executablePath();

@@ -2,8 +2,8 @@
   const ns = window.ImageGen = window.ImageGen || {};
 
   const SUCCESS_STATUSES = new Set(['completed', 'succeeded', 'success']);
-  const FAILURE_STATUSES = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded']);
-  const BATCH_TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'success', 'partial_success', 'partial', 'failed', 'cancelled', 'error']);
+  const FAILURE_STATUSES = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded', 'submission_refunded_closed']);
+  const BATCH_TERMINAL_STATUSES = new Set(['completed', 'succeeded', 'success', 'partial_success', 'partial', 'failed', 'cancelled', 'error', 'submission_refunded_closed']);
   const UNKNOWN_STATUSES = new Set(['submission_unknown', 'attention_required', 'unknown']);
 
   // ---- 任务完成浏览器通知 ----
@@ -418,7 +418,7 @@
     `/api/api-market/v1/tasks/${encodeURIComponent(taskId)}`,
     { ...context, taskId },
     ns.normalizeTaskResult,
-    (result) => SUCCESS_STATUSES.has(result.status) || FAILURE_STATUSES.has(result.status)
+    (result) => SUCCESS_STATUSES.has(result.status) || FAILURE_STATUSES.has(result.status) || UNKNOWN_STATUSES.has(result.status)
   );
   ns.pollBatch = (batchId, context, initialDelayMs) => {
     const previous = ns.polling.initialDelayMs;
@@ -476,11 +476,11 @@
     }
     const result = pollResult.result;
     persistAndRender(result, true);
-    if (result.status === 'attention_required') {
+    if (UNKNOWN_STATUSES.has(result.status)) {
       ns.stopProgress();
       ns.els.progressPanel.className = 'progress-panel error';
-      ns.els.progressHint.textContent = '部分子任务状态未知，需要继续刷新或人工确认；不会自动重发或退款。';
-      ns.setStatus('批次需要关注：状态未知的子任务不会自动重发，以避免重复计费。', 'error');
+      ns.els.progressHint.textContent = '任务状态未知，需要继续刷新或人工确认；不会自动重发或退款。';
+      ns.setStatus('任务需要关注：状态未知的请求不会自动重发，请联系管理员核查。', 'error');
       ns.notifyGenerationComplete(result, `批次需要关注：${result.counts?.unknown || 0} 张子任务状态未知。`);
       return;
     }
@@ -598,8 +598,13 @@
   // 结果落地。主生成（handleRun）与标注编辑提交（handleEditSubmit）共用此路径与同一 busy 锁。
   // 调用方需先完成表单校验、价格估算与用户确认。
   ns.runGeneration = async (settings) => {
+    if (ns.state.publicConfig?.features?.hybridImages) {
+      const price = ns.estimatePrice(settings);
+      if (!price.ok || !window.confirm(`固定报价 ${ns.formatMicros(price.totalMicros)}，按所选规格收费。\n尺寸、质量、格式为尽力满足，并非保证原生高清；成品展示实际尺寸与格式。参考图与成品默认永久保留。${ns.state.publicConfig?.features?.marketFallbackEnabled ? '明确技术失败可回退备用通道一次。' : '真实 Market 备用通道当前未配置。'}\n同意并提交吗？`)) return;
+    }
     // 后端请求体上限 24MB（上游 api.apib.ai 实测 32MB 放行，已非瓶颈）：提交前先估算并拦截，
     // 替代神秘的 413。主要来源是 image_urls 里的 base64 参考图/合成图。
+    if (ns.state.publicConfig?.features?.hybridImages) settings = { ...settings, bestEffortAccepted: true };
     const bodyBytes = ns.estimateRequestBodyBytes?.(settings) || 0;
     if (bodyBytes > ns.MAX_UPSTREAM_BODY_BYTES) {
       ns.setStatus(`请求体约 ${(bodyBytes / 1024 / 1024).toFixed(2)}MB，超过 24MB 上限；请减少参考图数量或先压缩图片后重试。`, 'error');

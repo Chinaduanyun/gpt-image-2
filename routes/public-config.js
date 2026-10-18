@@ -21,7 +21,7 @@ function handlePublicConfig(req, res) {
   }
 
   sendJson(res, 200, {
-    features: { quickBatchEnabled: QUICK_BATCH_ENABLED },
+    features: { quickBatchEnabled: QUICK_BATCH_ENABLED, hybridImages: process.env.IMAGE_PROVIDER_MODE === 'cpa', marketFallbackEnabled: Boolean(require('../lib/market-image').marketConfig()) },
     pricing: {
       version: pricingConfig.version,
       currencyRate: pricingConfig.currencyRate,

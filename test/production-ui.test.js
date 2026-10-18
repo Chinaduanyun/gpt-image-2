@@ -362,7 +362,8 @@ test('admin recovery UI only exposes the explicit refund-and-close action for sa
 
 test('history explains why unsafe records cannot be hidden', () => {
   const historyJs = fs.readFileSync(path.join(root, 'app/history.js'), 'utf8');
-  assert.match(historyJs, /提交状态尚未确认，不能隐藏/);
+  assert.match(historyJs, /批次或其他需关注的记录暂不能隐藏/);
+  assert.match(historyJs, /独立的提交状态未知记录可隐藏，不退款并保留管理员记录/);
   assert.match(historyJs, /隐藏不会取消任务或退款/);
   assert.match(historyJs, /账务尚未结清，不能隐藏/);
 });
@@ -377,4 +378,20 @@ test('safe current-request dismissal is limited to taskless submission_unknown r
   assert.match(generationJs, /不会退款、删除记录、重试或创建新任务/);
   assert.match(resultsJs, /await ns\.dismissTasklessSubmissionUnknown\(\)/);
   assert.match(resultsJs, /未退款、删除或重试任务/);
+});
+
+
+test('user balance never displays capacity or retention banner, including legacy storage response', async () => {
+  const source = fs.readFileSync(path.join(root, 'app/auth.js'), 'utf8');
+  assert.doesNotMatch(source, /存储可用|图片无自动过期|result\.json\.storage/);
+  for (const storage of [undefined, { freeBytes: 313.1 * 1024 ** 3 }]) {
+    const element = () => ({ textContent: '', classList: { toggle() {} } });
+    const els = Object.fromEntries(['loginPanel', 'userBar', 'appShell', 'adminToggleBtn', 'adminPanel', 'currentUserEmail', 'currentUserBalance'].map(key => [key, element()]));
+    const user = { email: 'test@example.invalid', balanceMicros: 12000000, isAdmin: false };
+    const ns = { state: { accountEpoch: 0, session: { token: 'test', user }, publicConfig: { features: { hybridImages: true } } }, els, formatMicros: () => '12.00', requestJson: async () => ({ ok: true, json: { user, ...(storage ? { storage } : {}) } }) };
+    vm.runInNewContext(source, { window: { ImageGen: ns } });
+    assert.equal(await ns.loadMe(), true);
+    assert.equal(els.currentUserBalance.textContent, '余额 12.00');
+    assert.equal(els.currentUserEmail.textContent, user.email);
+  }
 });

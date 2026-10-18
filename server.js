@@ -69,13 +69,30 @@ const server = http.createServer((req, res) => {
 async function startServer() {
   await initializeDataStore();
   await withDataStoreMutation((data) => markStaleSubmittingUnknown(data, Date.now(), 0, true));
-  const backgroundRefreshTimer = setInterval(refreshPendingLogsInBackground, BACKGROUND_REFRESH_INTERVAL_MS);
-  backgroundRefreshTimer.unref?.();
-  refreshPendingLogsInBackground();
+  // Only the local state classification gates listen: recoverTasks(true) runs the
+  // disk-only classification (spool cleanup, never-submitted refunds, unknown
+  // submissions) first. The network half (upstream polling, spool archival) is kicked
+  // off after listen instead, so a 180s upstream query can never block the site.
+  const runner = require('./lib/image-task-runner');
+  await runner.recoverTasks(true, { network: false });
+  let backgroundRefreshTimer = null;
   server.listen(PORT, HOST, () => {
     console.log(`Local server listening at http://${HOST}:${PORT}`);
+    // Controlled asynchronous network recovery; deduplicated by the runner's active map
+    // so a background refresh tick cannot start a second pass for the same task.
+    runner.recoverTasks(false).catch(() => {});
+    backgroundRefreshTimer = setInterval(refreshPendingLogsInBackground, BACKGROUND_REFRESH_INTERVAL_MS);
+    backgroundRefreshTimer.unref?.();
+    refreshPendingLogsInBackground();
   });
 }
+
+function shutdown() {
+  clearInterval(backgroundRefreshTimer);
+  server.close(() => process.exit(0));
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 startServer().catch((error) => {
   console.error(`Server initialization failed: ${error.message}`);

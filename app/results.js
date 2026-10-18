@@ -2,7 +2,7 @@
   const ns = window.ImageGen = window.ImageGen || {};
 
   const SUCCESS = new Set(['completed', 'succeeded', 'success']);
-  const FAILED = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded']);
+  const FAILED = new Set(['failed', 'cancelled', 'error', 'submit_failed_refunded', 'submission_refunded_closed']);
   const UNKNOWN = new Set(['submission_unknown', 'attention_required', 'unknown']);
 
   ns.showDebug = (debug) => {
@@ -81,7 +81,15 @@
     img.alt = `生成的图片 ${index + 1}`;
     img.loading = index > 0 ? 'lazy' : 'eager';
     img.decoding = 'async';
-    img.addEventListener('load', () => thumb.classList.add('is-loaded'), { once: true });
+    img.addEventListener('load', () => {
+      thumb.classList.add('is-loaded');
+      if (ns.state.publicConfig?.features?.hybridImages) {
+        const actual = document.createElement('span');
+        actual.className = 'slot-caption';
+        actual.textContent = `实际 ${img.naturalWidth} × ${img.naturalHeight} · ${child.imageUrl.split('.').pop().split('?')[0].toUpperCase()}（质量未验证）`;
+        thumb.append(actual);
+      }
+    }, { once: true });
     img.addEventListener('error', () => {
       thumb.classList.add('has-image-error');
       const fallback = document.createElement('div');

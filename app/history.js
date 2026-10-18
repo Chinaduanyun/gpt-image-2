@@ -2,6 +2,8 @@
   const ns = window.ImageGen = window.ImageGen || {};
 
   const STATUS_MAP = {
+    archiving: { label: '成品归档中', className: 'loading', group: 'active' },
+    queued: { label: '等待提交', className: 'loading', group: 'active' },
     completed: { label: '已完成', className: 'ok', group: 'completed' },
     succeeded: { label: '已完成', className: 'ok', group: 'completed' },
     success: { label: '已完成', className: 'ok', group: 'completed' },
@@ -68,10 +70,15 @@
     return `${counts.succeeded || 0}/${requested} 成功${counts.failed ? ` · ${counts.failed} 失败` : ''}${counts.unknown ? ` · ${counts.unknown} 未知` : ''}`;
   }
 
+  function isHistoryWork(log) {
+    return ['generation', 'batch', 'task'].includes(log.type || log.kind);
+  }
+
   ns.getFilteredMyLogs = () => {
     const query = ns.state.historySearch.trim().toLowerCase();
     const filter = ns.state.historyFilter;
     return ns.state.myLogs.filter((log) => {
+      if (!isHistoryWork(log)) return false;
       const status = ns.classifyLogStatus(log.status);
       const imageUrls = Array.isArray(log.imageUrls) ? log.imageUrls : [];
       if (filter === 'completed' && !imageUrls.length) return false;
@@ -115,7 +122,7 @@
   ns.renderMyLogs = (logs = null) => {
     if (Array.isArray(logs)) ns.state.myLogs = logs;
     const filtered = ns.getFilteredMyLogs();
-    if (!ns.state.myLogs.length) {
+    if (!ns.state.myLogs.some(isHistoryWork)) {
       ns.els.myLogsList.innerHTML = '<div class="list-state">暂无作品。生成图片后会出现在这里。<span>当前列表最多显示最近 100 条。</span></div>';
       return;
     }
@@ -132,8 +139,11 @@
       const billing = log.aggregateBilling || log.aggregate_billing || log.billing || log;
       const childrenSettled = !logChildren(log).length || logChildren(log).every((child) => (child.billing || child).settled === true);
       const canDelete = canReuse && ['completed', 'partial', 'failed'].includes(status.group) && billing.settled === true && childrenSettled;
+      const standaloneUnknown = log.status === 'submission_unknown'
+        && log.kind !== 'batch' && !log.batchId && !log.batch_id && !logChildren(log).length;
+      const canHide = canDelete || (canReuse && standaloneUnknown);
       const deleteBlocker = status.group === 'attention'
-        ? '提交状态尚未确认，不能隐藏。请联系管理员核查；隐藏不会取消任务或退款。'
+        ? '批次或其他需关注的记录暂不能隐藏，请联系管理员核查。独立的提交状态未知记录可隐藏，不退款并保留管理员记录。'
         : status.group === 'active'
           ? '任务仍在执行，不能隐藏。请等待任务结束或刷新状态。'
           : billing.settled !== true || !childrenSettled
@@ -146,7 +156,8 @@
           ${imageUrls.length ? `<button class="secondary compact" type="button" data-history-action="reference" data-log-id="${ns.escapeHtml(log.id)}">图片作参考</button>` : ''}
           ${imageUrls.length ? `<button class="secondary compact" type="button" data-history-action="edit" data-log-id="${ns.escapeHtml(log.id)}">编辑此图</button>` : ''}
           ${imageUrls.length >= 2 ? `<button class="secondary compact" type="button" data-history-action="download-zip" data-log-id="${ns.escapeHtml(log.id)}">打包下载</button>` : ''}
-          ${canDelete ? `<button class="secondary compact danger-button history-delete-btn" type="button" data-history-action="delete" data-log-id="${ns.escapeHtml(log.id)}">隐藏作品</button>` : `<button class="secondary compact history-delete-btn" type="button" disabled title="${ns.escapeHtml(deleteBlocker)}">不可隐藏</button>`}
+          ${canDelete ? `<button class="secondary compact danger-button" type="button" data-history-action="delete-assets" data-log-id="${ns.escapeHtml(log.id)}">永久删除图片</button>` : ''}
+          ${canHide ? `<button class="secondary compact danger-button history-delete-btn" type="button" data-history-action="delete" data-log-id="${ns.escapeHtml(log.id)}">隐藏作品</button>` : `<button class="secondary compact history-delete-btn" type="button" disabled title="${ns.escapeHtml(deleteBlocker)}">不可隐藏</button>`}
         </div>` : '';
       return `
         <article class="history-row">
@@ -161,6 +172,9 @@
               ${referenceText ? `<span>${ns.escapeHtml(referenceText)}</span>` : ''}
               <span>${ns.escapeHtml(ns.costText(log))}</span>
               <p>${ns.escapeHtml(ns.promptText(log))}</p>
+              ${log.error ? `<p>${ns.escapeHtml(log.error)}</p>` : ''}
+              ${(log.imageFiles || []).map((file) => `<span>实际 ${file.width || '?'} × ${file.height || '?'} · ${ns.escapeHtml(file.format || '')}（质量未验证）</span>`).join('')}
+              ${(log.inputFiles || []).map((file, i) => `<a href="/api/stored-images/${encodeURIComponent(file.fileName)}" target="_blank" rel="noopener">已保存参考图 ${i + 1}</a>`).join('')}
               ${renderChildren(log)}
               ${actions}
             </div>
@@ -211,10 +225,10 @@
 
   ns.deleteHistoryLog = async (logId) => {
     if (!logId) return;
-    const ok = window.confirm('确认隐藏这条作品吗？\n\n隐藏作品不等于取消任务或退款。账本会保留用于审计和余额对账；已归档图片可能按服务端策略清理。');
+    const ok = window.confirm('确认隐藏这条作品吗？\n\n隐藏作品不会取消任务或退款；提交状态未知的独立作品也可隐藏，仍需管理员核查。管理员记录会保留用于审计和余额对账；参考图和成品不会因隐藏而删除。');
     if (!ok) return;
     const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}`, { method: 'DELETE' });
-    if (!result.ok) return ns.setStatus(ns.getErrorMessage(result, '隐藏作品失败。执行中、未结算或需关注的任务不能隐藏。'), 'error');
+    if (!result.ok) return ns.setStatus(ns.getErrorMessage(result, '隐藏作品失败。执行中、批次未知或其他未结算任务不能隐藏；独立的提交状态未知作品除外。'), 'error');
     ns.setStatus('作品已从个人作品库隐藏，账本记录仍保留。', 'ok');
     await ns.loadMyLogs();
   };
@@ -240,6 +254,12 @@
     if (action === 'retry-load') return ns.loadMyLogs();
     const logId = button.dataset.logId;
     const log = ns.findHistoryLog(logId);
+    if (action === 'delete-assets') {
+      if (!window.confirm('永久删除此作品的参考图及成品？不可恢复，财务记录仍保留。')) return;
+      const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}/assets`, { method: 'DELETE', headers: { 'X-Confirm-Delete': 'permanent' } });
+      if (!result.ok) return ns.setStatus('删除失败。', 'error');
+      return ns.loadMyLogs();
+    }
     if (action === 'delete') return ns.deleteHistoryLog(logId);
     if (!log) return;
     if (action === 'reuse') return applyHistoryLogToForm(log);

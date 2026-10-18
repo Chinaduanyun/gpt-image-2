@@ -25,8 +25,8 @@ async function handleStoredImage(req, res, pathname) {
     return;
   }
 
-  const ownerLog = data.spendLogs.find((log) => Array.isArray(log.imageFiles) && log.imageFiles.some((file) => file.fileName === fileName));
-  if (!ownerLog) {
+  const ownerLog = data.spendLogs.find((log) => [...(log.imageFiles || []), ...(log.inputFiles || [])].some((file) => file.fileName === fileName));
+  if (!ownerLog || ownerLog.assetsDeletedAt) {
     send(res, 404, 'Not Found');
     return;
   }

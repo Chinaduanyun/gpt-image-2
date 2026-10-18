@@ -15,8 +15,8 @@
   ns.getPixelSize = (size = ns.els.aspectRatio.value, resolution = ns.els.resolution.value) =>
     ns.getPricingConfig().sizeResolutionMap?.[size]?.[resolution] || '';
   ns.normalizePricingModel = (model) => model === 'gpt-image-2-ext' ? 'gpt-image-2' : String(model || '').trim();
-  ns.getPricingProfile = () => {
-    const model = ns.normalizePricingModel(ns.els.model.value);
+  ns.getPricingProfile = (selectedModel = ns.els.model.value) => {
+    const model = ns.normalizePricingModel(selectedModel);
     const profile = ns.getPricingConfig().modelProfiles?.[model];
     if (!profile) return null;
     const totalMultiplier = Number(profile.totalMultiplier);
@@ -50,18 +50,21 @@
   };
   ns.formatMicros = ns.formatAdaptiveMicros;
 
-  // overrides 允许调用方（如编辑 Tab）用自己的参数计价而不读全局控件：{ size, resolution, n }。
+  // overrides 允许调用方（如编辑 Tab）用自己的参数计价而不读全局控件：{ model, quality, size, resolution, n }。
   ns.estimatePrice = (overrides = {}) => {
     const pricing = ns.getPricingConfig();
-    const profile = ns.getPricingProfile();
-    if (!profile) return { ok: false, error: `模型 ${ns.els.model.value || '未知'} 缺少有效计价策略，暂时无法生成。` };
+    const model = overrides.model ?? ns.els.model.value;
+    const profile = ns.getPricingProfile(model);
+    if (!profile) return { ok: false, error: `模型 ${model || '未知'} 缺少有效计价策略，暂时无法生成。` };
 
+    const official = profile.model === 'gpt-image-2-official';
+    const quality = overrides.quality ?? ns.els.quality.value;
     const size = overrides.size ?? ns.els.aspectRatio.value;
     const resolution = overrides.resolution ?? ns.els.resolution.value;
     const n = overrides.n ?? ns.getImageCount();
-    const priceMap = ns.isOfficialModel() ? pricing.officialPriceMap : pricing.simplePriceMap;
-    const pixelSize = ns.isOfficialModel() ? ns.getPixelSize(size, resolution) : '';
-    const exact = ns.isOfficialModel() ? priceMap?.[pixelSize]?.[ns.els.quality.value] : priceMap?.[resolution];
+    const priceMap = official ? pricing.officialPriceMap : pricing.simplePriceMap;
+    const pixelSize = official ? ns.getPixelSize(size, resolution) : '';
+    const exact = official ? priceMap?.[pixelSize]?.[quality] : priceMap?.[resolution];
     const fallback = ns.maxPriceValue(priceMap);
     const providerUnitUsd = Number(exact ?? fallback);
     const microsPerUnit = Number(pricing.microsPerUnit) || 1000000;
@@ -85,8 +88,8 @@
       pixelSize,
       precise: !isMaximum,
       isMaximum,
-      detail: ns.isOfficialModel()
-        ? `${isMaximum ? (pixelSize || size) : pixelSize} · ${ns.els.quality.value} · ${n} 张`
+      detail: official
+        ? `${isMaximum ? (pixelSize || size) : pixelSize} · ${quality} · ${n} 张`
         : `快速低价版 · ${isMaximum ? '最高预扣' : resolution} · ${n} 张`
     };
   };
