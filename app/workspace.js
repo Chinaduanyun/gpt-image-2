@@ -27,16 +27,16 @@
       });
     } finally { db.close(); }
   }
-  const editorFields = ['editPrompt', 'editAspectRatio', 'editResolution', 'editAnnotationText', 'editAppendToggle'];
+  const editorFields = ['editModel', 'editPrompt', 'editAspectRatio', 'editResolution', 'editAnnotationText', 'editAppendToggle'];
   const fields = ['model', 'aspectRatio', 'resolution', 'quality', 'imageCount', 'outputFormat', 'outputCompression'];
   function captureDraft() {
     const edit = ns.state.edit;
     // Only uploaded image data is durable; stored asset URLs are revalidated before reuse.
     return { prompt: ns.els.prompt.value, fields: Object.fromEntries(fields.map(k => [k, ns.els[k].value])), references: structuredClone(ns.state.referenceImages),
-      edit: edit ? { ...edit, image: null, strokes: structuredClone(edit.strokes), referenceImages: structuredClone(edit.referenceImages) } : null,
+      edit: edit ? { ...edit, image: null, referencesLoading: false, imageLoading: false, strokes: structuredClone(edit.strokes), referenceImages: structuredClone(edit.referenceImages) } : null,
       editPrompt: ns.els.editPrompt?.value || '', editorFields: Object.fromEntries(editorFields.filter(k => ns.els[k]).map(k => [k, k === 'editAppendToggle' ? ns.els[k].checked : ns.els[k].value])) };
   }
-  let draft = null, hydrating = false;
+  let draft = null, hydrating = null;
   function persist() {
     const email = owner();
     if (!email || !restored) return Promise.reject(new Error('工作区尚未恢复，请稍后重试。'));
@@ -46,7 +46,9 @@
     return next;
   }
   async function restoreDraft() {
-    hydrating = true;
+    const hydration = {}; hydrating = hydration;
+    ns.updatePendingUi();
+    try {
     ns.resetResult();
     selected = ''; const rev = ++revision; const c = context();
     if (draft) {
@@ -54,9 +56,10 @@
       for (const field of fields) if (draft.fields?.[field] !== undefined) ns.els[field].value = draft.fields[field];
       ns.state.referenceImages = structuredClone(draft.references || []);
       ns.resetEditState?.();
+      if (ns.els.editModel) ns.els.editModel.value = draft.editorFields?.editModel || ns.els.model.value;
       for (const [k, value] of Object.entries(draft.editorFields || {})) if (ns.els[k]) { if (k === 'editAppendToggle') ns.els[k].checked = value; else ns.els[k].value = value; }
       if (draft.edit?.sourceUrl) {
-        ns.state.edit = { ...structuredClone(draft.edit), image: null };
+        ns.state.edit = { ...structuredClone(draft.edit), image: null, referencesLoading: false, imageLoading: false };
         ns.els.editPrompt.value = draft.editPrompt || '';
         const edit = ns.state.edit;
         if (edit.sourceUrl) {
@@ -66,15 +69,19 @@
             catch { if (current(c) && revision === rev) ns.resetEditState?.(); source = ''; }
           }
           if (!current(c) || revision !== rev) return;
-          const image = new Image();
-          image.onload = () => { if (current(c) && ns.state.edit === edit) { edit.image = image; ns.renderEditor?.(); } };
-          image.src = source;
+          await new Promise(resolve => {
+            const image = new Image();
+            image.onload = () => { if (current(c) && revision === rev && ns.state.edit === edit) { edit.image = image; edit.imageLoading = false; edit.referencesLoading = false; ns.renderEditor?.(); } resolve(); };
+            image.onerror = () => { if (current(c) && revision === rev && ns.state.edit === edit) ns.resetEditState?.(); resolve(); };
+            image.src = source;
+          });
         }
       }
     }
     ns.updatePromptStats(); ns.updateModelUi(); ns.renderReferences(); ns.renderEditor?.();
-    hydrating = false;
-    ns.updatePendingUi(); render();
+    } finally {
+      if (hydrating === hydration) { hydrating = null; ns.updatePendingUi(); render(); }
+    }
   }
   const capsule = document.createElement('button');
   capsule.id = 'taskCapsule'; capsule.className = 'task-capsule'; capsule.type = 'button'; capsule.setAttribute('aria-haspopup', 'dialog');
@@ -82,12 +89,13 @@
   let returnFocus = null;
   const close = document.createElement('button'); close.textContent = '关闭任务列表'; close.onclick = () => drawer.close();
   const next = document.createElement('button'); next.textContent = '+ 新建下一次'; next.id = 'newDraftBtn';
-  const resume = document.createElement('button'); resume.textContent = '返回未完成草稿'; resume.onclick = () => { restoreDraft(); persist().catch(storageError); drawer.close(); };
+  const resume = document.createElement('button'); resume.textContent = '返回未完成草稿'; resume.onclick = async () => { await restoreDraft(); await persist().catch(storageError); drawer.close(); };
   const list = document.createElement('div');
   const notice = document.createElement('div'); notice.className = 'task-notice'; notice.setAttribute('role', 'status');
   drawer.append(close, next, resume, list); document.body.append(capsule, drawer, notice);
   capsule.onclick = () => { if (!restored || !owner()) return; returnFocus = document.activeElement; unseen = 0; render(); drawer.showModal(); };
-  drawer.addEventListener('close', () => { if (restored && owner()) (returnFocus?.isConnected ? returnFocus : capsule).focus(); });
+  drawer.addEventListener('cancel', () => { revision++; });
+  drawer.addEventListener('close', () => { revision++; if (restored && owner()) (returnFocus?.isConnected ? returnFocus : capsule).focus(); });
   function storageError(e) { ns.setStatus(`工作区保存失败，不能安全提交：${e.message || e}`, 'error'); }
   const detailNext = next.cloneNode(true); detailNext.id = 'detailNewDraftBtn'; ns.els.runBtn.after(detailNext);
   detailNext.onclick = () => next.onclick();
@@ -144,6 +152,18 @@
     if (!/^image\/(png|jpeg|webp)$/.test(blob.type) || blob.size > ns.constants.MAX_REFERENCE_IMAGE_BYTES) throw new Error('输入图片格式或大小不符合限制');
     return { id: ns.createIdempotencyKey(), type: 'file', name: '任务输入', value: await ns.referenceFileToDataUrl(blob), bytes: blob.size };
   }
+  function requestInputs(task) {
+    let files = task.inputFiles || [];
+    if (task.kind === 'batch') {
+      const children = task.children || [];
+      const expected = Math.max(0, ...children.map(child => (child.inputFiles || []).length));
+      const child = children[0];
+      if (!child || child.assetsDeleted || (child.inputFiles || []).length !== expected) throw new Error('批次输入不完整或已删除，未复制。');
+      files = child.inputFiles || [];
+    }
+    if (files.length > ns.constants.MAX_REFERENCE_IMAGES) throw new Error('参考图超过 16 张，未复制。');
+    return files;
+  }
   async function copyTask(id) {
     if (ns.state.isBusy) return;
     const c = context(), op = ++revision;
@@ -153,10 +173,11 @@
       const task = registry.get(id);
       if (!task || task.assetsDeleted) throw new Error('任务输入已删除或不可用');
       const references = [];
-      for (const file of task.inputFiles || []) {
+      for (const file of requestInputs(task)) {
         const ref = await fetchInput(file, c);
         if (!valid()) return;
         references.push(ref);
+        if (references.reduce((sum, item) => sum + item.bytes, 0) > ns.constants.MAX_REFERENCE_TOTAL_BYTES) throw new Error('参考图合计超过 18MB，未复制。');
       }
       if (!valid()) return;
       const settings = task.settings || {};
@@ -170,7 +191,7 @@
   ns.hasPendingGeneration = () => Boolean(selected);
   ns.updatePendingUi = () => {
     oldUpdate();
-    const locked = ns.state.isBusy || Boolean(selected);
+    const locked = ns.state.isBusy || Boolean(selected) || Boolean(hydrating);
     ns.els.runBtn.disabled = locked || activeCount >= limit || !restored;
     ns.els.runBtn.textContent = selected ? '任务详情（只读）' : activeCount >= limit ? `进行中请求已达上限 ${limit}` : ns.state.isBusy ? '提交中…' : '生成图片';
     ns.els.prompt.readOnly = Boolean(selected);
@@ -190,7 +211,7 @@
     return useResults();
   };
   ns.workspaceSubmit = {
-    ready: () => restored && !selected && activeCount < limit,
+    ready: () => restored && !selected && !hydrating && activeCount < limit,
     capture: () => { revision++; draft = captureDraft(); },
     save: async (task) => { registry.set(task.id, { ...task, recovery: registry.get(task.id)?.recovery || structuredClone(task) }); await persist(); },
     remove: async (id) => { registry.delete(id); await persist(); },
@@ -259,7 +280,7 @@
   ns.resetAccountRuntime = () => {
     if (owner() && restored) { if (!selected) draft = captureDraft(); persist().catch(() => {}); }
     clearTimeout(timer); restored = false; registry = new Map(); selected = ''; draft = null; activeCount = 0; unseen = 0; revision++;
-    runner = null; notice.replaceChildren(); drawer.close(); capsule.hidden = true; detailNext.hidden = true;
+    hydrating = null; runner = null; notice.replaceChildren(); drawer.close(); capsule.hidden = true; detailNext.hidden = true;
     reset(); render();
   };
   ns.restoreStoredResult = () => {}; // Task views never hydrate the composer.
@@ -287,7 +308,7 @@
     draft = captureDraft(); persist().catch(storageError);
   };
   ns.isWorkspaceReadOnly = () => Boolean(selected);
-  ns.saveWorkspaceDraft = saveDraft;
+  ns.saveWorkspaceDraft = () => { revision++; saveDraft(); };
   document.addEventListener('input', () => { if (!selected) revision++; saveDraft(); });
   document.addEventListener('change', () => setTimeout(saveDraft, 0));
   for (const name of ['renderReferences', 'renderEditor']) {

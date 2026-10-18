@@ -104,6 +104,7 @@
         if (ns.els?.editReferenceFileInput) ns.els.editReferenceFileInput.value = '';
         ns.renderEditReferences();
         ns.updateEditControls();
+        ns.saveWorkspaceDraft?.();
         const summary = added ? `已添加 ${added} 张参考图，请在修改说明中用“图 2”“图 3”等指定用途。` : '未添加参考图。';
         ns.setEditReferenceStatus([summary, ...rejected].join('\n'), rejected.length ? 'error' : 'ok');
       }
@@ -114,6 +115,7 @@
     if (ns.isEditLocked() || !ns.state.edit) return;
     ns.state.edit.referenceImages = references().filter((item) => item.id !== id);
     ns.renderEditReferences();
+    ns.saveWorkspaceDraft?.();
     ns.setEditReferenceStatus('已删除参考图，图号已重新排列，请核对修改说明中的图号。', 'ok');
   };
   ns.clearEditReferences = () => {
@@ -121,6 +123,7 @@
     ns.state.edit.referenceImages = [];
     if (ns.els?.editReferenceFileInput) ns.els.editReferenceFileInput.value = '';
     ns.renderEditReferences();
+    ns.saveWorkspaceDraft?.();
     ns.setEditReferenceStatus('编辑参考图已清空，底图和标注不变。', 'ok');
   };
   ns.bindEditReferenceEvents = () => {

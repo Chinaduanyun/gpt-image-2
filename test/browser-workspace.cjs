@@ -86,6 +86,20 @@ const { chromium } = require('playwright');
     await otherPage.waitForFunction(() => document.querySelectorAll('.task-card').length === 2);
     assert.equal(await otherPage.locator('.task-card img').count(), 2);
     await otherContext.close();
+    // Durable editor mutations and old transient flags must not lock a restored editor.
+    await page.evaluate(async (image) => {
+      ImageGen.loadEditImage(image, 'upload');
+      await new Promise((resolve, reject) => { const deadline = Date.now() + 5000; const check = () => { if (ImageGen.state.edit?.image) return resolve(); if (Date.now() > deadline) return reject(new Error('mock editor image did not decode')); setTimeout(check, 20); }; check(); });
+      ImageGen.els.editModel.value = 'gpt-image-2-official';
+      ImageGen.els.model.value = 'gpt-image-2-official';
+      ImageGen.els.editAspectRatio.value = '16:9'; ImageGen.els.editResolution.value = '2k';
+      ImageGen.setEditTool('rect'); ImageGen.setEditColor('#ef4444'); ImageGen.setEditWidthTier(2);
+      ImageGen.state.edit.referencesLoading = true; ImageGen.state.edit.imageLoading = true;
+      ImageGen.saveWorkspaceDraft();
+    }, `data:image/png;base64,${png.toString('base64')}`);
+    await page.reload();
+    await page.waitForFunction(() => ImageGen.state.edit?.image && !ImageGen.state.edit.imageLoading && !ImageGen.state.edit.referencesLoading);
+    assert.deepEqual(await page.evaluate(() => ({ tool: ImageGen.state.edit.tool, color: ImageGen.state.edit.color, width: ImageGen.state.edit.widthTier, model: ImageGen.els.editModel.value, ratio: ImageGen.els.editAspectRatio.value, resolution: ImageGen.els.editResolution.value })), { tool: 'rect', color: '#ef4444', width: 2, model: 'gpt-image-2-official', ratio: '16:9', resolution: '2k' });
     await page.locator('#logoutBtn').click();
     await page.locator('#loginPanel').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#taskCapsule').isVisible(), false);

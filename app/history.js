@@ -185,6 +185,7 @@
   };
 
   function applyHistoryLogToForm(log) {
+    if (ns.isWorkspaceReadOnly?.()) { ns.setStatus('当前为只读任务详情，请先返回草稿再复用历史作品。', 'error'); return false; }
     if (!log || !['generation', 'batch', 'task'].includes(log.type || log.kind)) return false;
     const settings = log.settings || {};
     ns.els.prompt.value = log.prompt || '';

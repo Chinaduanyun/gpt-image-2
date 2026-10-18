@@ -81,16 +81,19 @@
     if (!ns.state.edit) return;
     ns.state.edit.tool = tool;
     ns.renderEditToolbarState();
+    ns.saveWorkspaceDraft?.();
   };
   ns.setEditColor = (color) => {
     if (!ns.state.edit) return;
     ns.state.edit.color = color;
     ns.renderEditToolbarState();
+    ns.saveWorkspaceDraft?.();
   };
   ns.setEditWidthTier = (tier) => {
     if (!ns.state.edit) return;
     ns.state.edit.widthTier = tier;
     ns.renderEditToolbarState();
+    ns.saveWorkspaceDraft?.();
   };
 
   // ---- 画布尺寸与重绘 ----
