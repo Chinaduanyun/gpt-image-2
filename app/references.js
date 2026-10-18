@@ -122,7 +122,6 @@
       figure.append(img, caption, removeBtn);
       return figure;
     }));
-    if (!count) ns.setReferenceStatus('支持 PNG、JPEG、WebP；单张不超过 5MB，本地文件合计不超过 18MB，最多 16 张。');
   };
 
   // 校验+入库一批 File（本地选择或剪贴板粘贴共用），逐张套用格式/单张5MB/合计18MB/张数上限。

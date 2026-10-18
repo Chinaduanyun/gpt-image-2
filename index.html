@@ -94,8 +94,12 @@
 
           <section class="reference-card preview-reference-card" aria-labelledby="referenceTitle">
             <div class="label-row">
-              <div>
+              <div class="reference-title-row">
                 <span class="preview-section-label" id="referenceTitle">参考图片</span>
+                <details class="reference-help">
+                  <summary aria-label="参考图片格式和大小说明">i</summary>
+                  <p>支持 PNG、JPEG、WebP；单张不超过 5MB，本地文件合计不超过 18MB，最多 16 张。</p>
+                </details>
               </div>
               <span id="referenceCount" class="mini-note">0/16 张</span>
             </div>
@@ -106,7 +110,7 @@
                   <button id="referenceUploadBtn" class="secondary compact" type="button">＋ 添加图片</button>
                   <button id="clearReferencesBtn" class="secondary compact" type="button">清空</button>
                 </div>
-                <div id="referenceStatus" class="status reference-status">PNG、JPEG、WebP；单张不超过 5MB，最多 16 张。</div>
+                <div id="referenceStatus" class="status reference-status" aria-live="polite"></div>
               </div>
               <div id="referencePreviewGrid" class="input-preview-grid reference-preview-grid hidden"></div>
             </div>

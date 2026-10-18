@@ -541,9 +541,28 @@
   align-items: flex-start;
 }
 
-.preview-reference-card .label-row > div:first-child {
-  display: grid;
-  gap: 4px;
+.preview-reference-card .reference-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.reference-help { position: relative; }
+.reference-help summary {
+  display: grid; place-items: center; width: 17px; height: 17px;
+  padding: 0; border: 1px solid #b4b1c7; border-radius: 50%;
+  color: #858097; font-size: 11px; font-family: Georgia, serif;
+  font-weight: 600; line-height: 1; cursor: pointer; list-style: none;
+}
+.reference-help summary::-webkit-details-marker { display: none; }
+.reference-help summary:focus-visible { outline: 2px solid var(--preview-accent); outline-offset: 3px; }
+.reference-help[open] summary { color: var(--preview-accent); border-color: currentColor; }
+.preview-reference-card .reference-help p {
+  position: absolute; top: 22px; left: -70px; z-index: 12;
+  width: min(260px, calc(100vw - 80px)); margin: 0; padding: 11px 13px;
+  border: 1px solid var(--preview-border); border-radius: 11px;
+  background: #fff; color: #696678; font-size: 12px; line-height: 1.7;
+  box-shadow: 0 5px 20px #28203b16;
 }
 
 .preview-reference-card .label-row p {
@@ -566,6 +585,8 @@
 .preview-reference-card .reference-controls button {
   width: auto;
 }
+
+.preview-reference-card .reference-status:empty { display: none; }
 
 .preview-reference-card .reference-status {
   min-height: 0;

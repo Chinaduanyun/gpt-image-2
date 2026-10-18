@@ -34,6 +34,14 @@ const { chromium } = require('playwright');
     assert.equal(await page.locator('#taskCapsule').isVisible(), false, 'task capsule is hidden before account restoration');
     await page.locator('#emailInput').fill('test@staging.invalid'); await page.locator('#loginBtn').click(); await page.locator('#appShell').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#runBtn').disabled);
+    assert.equal(await page.locator('#aspectRatio').inputValue(), 'auto');
+    assert.equal(await page.locator('.reference-help p').isVisible(), false);
+    assert.equal(await page.locator('#referenceStatus').textContent(), '');
+    await page.locator('.reference-help summary').click();
+    assert.equal(await page.locator('.reference-help p').textContent(), '支持 PNG、JPEG、WebP；单张不超过 5MB，本地文件合计不超过 18MB，最多 16 张。');
+    assert.equal(await page.locator('.reference-help p').isVisible(), true);
+    await page.locator('.reference-help summary').press('Enter');
+    assert.equal(await page.locator('.reference-help p').isVisible(), false);
     // Header removal must not leave a phantom grid row that pushes submit off-screen.
     for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 800 }, { width: 390, height: 844 }]) {
       await page.setViewportSize(viewport);

@@ -16,7 +16,7 @@ window.DEFAULT_APP_CONFIG = {
   },
   defaults: {
     model: "gpt-image-2",
-    aspectRatio: "1:1",
+    aspectRatio: "auto",
     resolution: "1k",
     quality: "low",
     outputFormat: "png",
