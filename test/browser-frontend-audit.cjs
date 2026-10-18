@@ -32,6 +32,7 @@ const { handlePublicConfig } = require('../routes/public-config');
       else if (url.pathname === '/api/me') json = { user: { email, isAdmin: email.startsWith('a@'), balanceMicros: 100000000 } };
       else if (url.pathname === '/api/me/tasks') json = { tasks, activeCount: tasks.filter(t => t.active).length, limit: 3 };
       else if (url.pathname.includes('/images/generations')) { generationPosts++; if (!allowGeneration) throw new Error('Unexpected generation POST'); generationRequests.push(route.request().postDataJSON()); json = { taskId: `history-${generationPosts}`, status: 'processing' }; }
+      else if (url.pathname === '/api/me/logs') json = { logs: [], page: { limit: 24, total: 0, hasMore: false, nextCursor: null } };
       else if (url.pathname.includes('/logs') || url.pathname.includes('spend-logs')) json = { logs: [] };
       else if (url.pathname.includes('/users')) json = { users: [] };
       else if (url.pathname.startsWith('/api/stored-images/')) {
@@ -276,10 +277,12 @@ const { handlePublicConfig } = require('../routes/public-config');
     assert.equal(await page.evaluate(() => historyRunCalls), runCount);
     await logout(); await login('a@test.invalid');
     // Rejected reads from the old account may not repopulate account-owned DOM.
+    await page.locator('[data-preview-nav="library"]').click();
+    await page.waitForFunction(() => ImageGen.getHistoryPageState().status === 'loaded');
     await page.evaluate(() => {
       const request = ImageGen.requestJson;
       ImageGen.requestJson = url => {
-        if (url === '/api/me/logs?limit=100') return new Promise((_, reject) => { window.rejectOldHistory = () => reject(new Error('old history failure')); });
+        if (url.startsWith('/api/me/logs?paged=1')) return new Promise((_, reject) => { window.rejectOldHistory = () => reject(new Error('old history failure')); });
         if (url === '/api/admin/users') return new Promise((_, reject) => { window.rejectOldAdmin = () => reject(new Error('old admin failure')); });
         return request(url);
       };

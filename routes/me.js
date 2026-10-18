@@ -6,22 +6,8 @@ const { requireSession, sendAuthError, publicUser, setSessionCookie } = require(
 const { decodePathPart } = require('../lib/common');
 const { refreshLogsFromUpstream, markStaleSubmittingUnknown } = require('../lib/spend-logs');
 const { canPermanentlyDeleteAssets, completeAssetDeletion } = require('../lib/image-assets');
-const { batchDto, getBatchLogs, neutralizeSubmitEcho } = require('./api-market');
-
-function groupHistoryLogs(logs) {
-  const output = [];
-  const batches = new Map();
-  for (const log of logs) {
-    if (log.type === 'generation' && log.batchId) {
-      if (!batches.has(log.batchId)) batches.set(log.batchId, []);
-      batches.get(log.batchId).push(log);
-    } else {
-      output.push(log);
-    }
-  }
-  for (const members of batches.values()) output.push(batchDto(members));
-  return output.sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
-}
+const { getBatchLogs, neutralizeSubmitEcho } = require('./api-market');
+const { groupHistoryLogs, historyPage } = require('../lib/history-pagination');
 
 function getLogsForEmail(data, email, limit = 50, offset = 0) {
   const logs = data.spendLogs
@@ -68,14 +54,32 @@ async function handleMe(req, res, pathname, url) {
   }
 
   if (pathname === '/api/me/logs' && req.method === 'GET') {
+    if (url.searchParams.get('paged') === '1') {
+      // A paged gallery read is disk-only: active task polling is owned by the
+      // workspace, not by browsing potentially hundreds of historical groups.
+      const latestData = loadDataStore();
+      const latestAuth = requireSession(req, latestData);
+      if (!latestAuth.ok) { sendAuthError(res, latestAuth); return; }
+      try {
+        sendJson(res, 200, historyPage(latestData, latestAuth.email, url.searchParams));
+      } catch (error) {
+        if (error.statusCode !== 400) throw error;
+        sendJson(res, 400, { error: { code: error.code, message: error.message } });
+      }
+      return;
+    }
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 20));
     const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
     await withDataStoreMutation((latestData) => markStaleSubmittingUnknown(latestData));
     const refreshData = loadDataStore();
-    const logs = getLogsForEmail(refreshData, auth.email, limit, offset);
+    const refreshAuth = requireSession(req, refreshData);
+    if (!refreshAuth.ok) { sendAuthError(res, refreshAuth); return; }
+    const logs = getLogsForEmail(refreshData, refreshAuth.email, limit, offset);
     await refreshLogsFromUpstream(refreshData, getRefreshLogsForHistoryItems(refreshData, logs), loadApiMarketConfig());
     const refreshedData = loadDataStore();
-    sendJson(res, 200, { logs: getLogsForEmail(refreshedData, auth.email, limit, offset) });
+    const finalAuth = requireSession(req, refreshedData);
+    if (!finalAuth.ok) { sendAuthError(res, finalAuth); return; }
+    sendJson(res, 200, { logs: getLogsForEmail(refreshedData, finalAuth.email, limit, offset) });
     return;
   }
 

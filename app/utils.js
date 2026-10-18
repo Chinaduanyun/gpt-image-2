@@ -37,6 +37,17 @@
       return false;
     }
   };
+  // Only locally archived originals have an authenticated derived preview route.
+  ns.storedImageThumbnailUrl = (value) => {
+    const text = String(value || '');
+    const match = text.match(/^\/api\/stored-images\/([^/?#]+)$/);
+    if (!match) return '';
+    try {
+      const name = decodeURIComponent(match[1]);
+      if (!name || /[\/\\\x00-\x1f]/.test(name) || name === '.' || name === '..') return '';
+      return `/api/stored-images/thumb/${encodeURIComponent(name)}`;
+    } catch { return ''; }
+  };
   // 上游入口已切换为 api.apib.ai（2026-07-17 实测请求体 32MB 仍放行；旧裸域名 apib.ai
   // 的 1MB nginx 限制已绕开）。瓶颈回到我们后端 GENERATION_BODY_LIMIT = 24MB，
   // 守卫与之对齐，提交前在前端拦截并给出可操作的中文提示，避免神秘 413。

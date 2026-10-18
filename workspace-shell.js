@@ -28,6 +28,8 @@
   let activeHistoryRow = null;
   let lastHistoryTrigger = null;
   let detailImages = [];
+  let authenticatedShell = false;
+  let activeDetailSignature = '';
 
   const isClassHidden = (element) => !element || element.classList.contains('hidden');
   const isAdminAvailable = () => Boolean(adminButton && !isClassHidden(adminButton));
@@ -46,6 +48,7 @@
 
   function updateViewDom(name) {
     activeView = name;
+    window.ImageGen?.setHistoryLibraryVisible?.(name === 'library' && !isClassHidden(appShell));
     views.forEach((view) => {
       view.hidden = view.dataset.previewView !== name;
     });
@@ -93,6 +96,15 @@
     else historyDialog.removeAttribute('open');
     if (restoreFocus && lastHistoryTrigger?.focus) lastHistoryTrigger.focus({ preventScroll: true });
     activeHistoryRow = null;
+    clearDetailSources();
+  }
+
+  function clearDetailSources() {
+    detailImages = []; activeDetailSignature = '';
+    historyDetailImage?.removeAttribute('src');
+    historyOpenOriginal?.removeAttribute('href');
+    historyDetailGallery?.replaceChildren();
+    historyDetailContent?.replaceChildren();
   }
 
   function activateView(requestedName, options = {}) {
@@ -206,7 +218,7 @@
     historyDetailEmpty.hidden = hasImage;
     historyOpenOriginal.classList.toggle('hidden', !hasImage);
     if (hasImage) {
-      historyDetailImage.src = image.src;
+      if (historyDetailImage.getAttribute('src') !== image.src) historyDetailImage.src = image.src;
       historyDetailImage.alt = image.alt || `历史作品图片 ${index + 1}`;
       historyOpenOriginal.href = image.src;
     } else {
@@ -228,7 +240,10 @@
       button.type = 'button';
       button.dataset.previewGalleryIndex = String(index);
       button.setAttribute('aria-label', `查看第 ${index + 1} 张图片`);
-      thumbnail.src = image.src;
+      const thumb = window.ImageGen?.storedImageThumbnailUrl?.(image.src);
+      if (thumb) { thumbnail.src = thumb; thumbnail.onerror = () => { thumbnail.removeAttribute('src'); thumbnail.hidden = true; }; }
+      else { thumbnail.hidden = true; button.textContent = '预览不可用'; }
+      thumbnail.loading = 'lazy'; thumbnail.decoding = 'async';
       thumbnail.alt = '';
       button.append(thumbnail);
       historyDetailGallery.append(button);
@@ -239,12 +254,11 @@
 
   function openHistoryDialog(row, trigger, selectedIndex = 0) {
     if (!historyDialog || !historyDetailContent || typeof row?.querySelectorAll !== 'function') return;
-    activeHistoryRow = row;
+    activeHistoryRow = row; activeDetailSignature = row.historySignature;
     lastHistoryTrigger = trigger;
-    detailImages = [...row.querySelectorAll('.history-thumb img')].map((image) => ({
-      src: image.currentSrc || image.src,
-      alt: image.alt
-    })).filter((image) => image.src);
+    let originals = [];
+    try { originals = JSON.parse(row.dataset.imageUrls || '[]'); } catch {}
+    detailImages = originals.filter(url => window.ImageGen?.isSafeLinkUrl?.(url)).map((src, index) => ({ src, alt: `历史作品图片 ${index + 1}` }));
 
     const topLine = row.querySelector('.history-topline')?.cloneNode(true);
     const main = row.querySelector('.history-main')?.cloneNode(true);
@@ -321,7 +335,7 @@
     historyList?.addEventListener('keydown', handleHistoryKeydown);
     historyDialog?.addEventListener('click', handleHistoryDialogClick);
     historyDialog?.addEventListener('close', () => {
-      activeHistoryRow = null;
+      activeHistoryRow = null; clearDetailSources();
     });
     historyDialogClose?.addEventListener('click', () => closeHistoryDialog());
     window.addEventListener('hashchange', handleHashChange);
@@ -336,14 +350,19 @@
 
   function syncAuthenticatedShell() {
     if (isClassHidden(appShell)) {
+      authenticatedShell = false;
       closeHistoryDialog({ restoreFocus: false });
       closeAdminIfNeeded();
       updateViewDom('workspace');
       return;
     }
 
+    const newlyAuthenticated = !authenticatedShell;
+    authenticatedShell = true;
     bindEvents();
+    if (newlyAuthenticated) activateView(hashView(), { updateUrl: false });
     enhanceHistoryRows();
+    window.ImageGen?.setHistoryLibraryVisible?.(activeView === 'library');
     if (activeView === 'admin' && (!isAdminAvailable() || !isAdminOpen())) {
       activateView('workspace', { replaceHash: true });
     }
@@ -367,9 +386,18 @@
     }
   });
 
-  const historyObserver = new MutationObserver(enhanceHistoryRows);
+  function syncHistoryDetail() {
+    if (!activeHistoryRow || !isHistoryDialogOpen()) return;
+    if (!activeHistoryRow.isConnected || !window.ImageGen?.findHistoryLog?.(activeHistoryRow.dataset.logId)) {
+      closeHistoryDialog({ restoreFocus: false }); return;
+    }
+    const currentSources = JSON.stringify(detailImages.map(image => image.src));
+    if (activeHistoryRow.dataset.imageUrls !== currentSources || activeDetailSignature !== activeHistoryRow.historySignature) closeHistoryDialog({ restoreFocus: false });
+  }
+  if (window.ImageGen) window.ImageGen.syncHistoryDetail = syncHistoryDetail;
+  const historyObserver = new MutationObserver(() => { enhanceHistoryRows(); syncHistoryDetail(); });
   const progressHintObserver = new MutationObserver(suppressPreviewProgressHint);
-  if (historyList) historyObserver.observe(historyList, { childList: true });
+  if (historyList) historyObserver.observe(historyList, { childList: true, subtree: true });
   if (progressHint) progressHintObserver.observe(progressHint, { childList: true, characterData: true, subtree: true });
   if (adminButton) adminObserver.observe(adminButton, { attributes: true, attributeFilter: ['class'] });
   if (adminPanel) adminObserver.observe(adminPanel, { attributes: true, attributeFilter: ['class'] });

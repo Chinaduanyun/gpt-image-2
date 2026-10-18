@@ -122,12 +122,15 @@
     if (task.active) return '生成中';
     return task.status === 'partial_success' ? '部分完成' : task.imageUrls?.length ? '已完成' : '未生成图片';
   }
-  function taskPicture(task, compact = false) {
+  function taskPicture(task, compact = false, priorImages = new Map()) {
     const visual = document.createElement('span'); visual.className = 'task-picture';
-    const url = !task.assetsDeleted && task.imageUrls?.find(value => value.startsWith('/api/stored-images/'));
+    const url = !task.assetsDeleted && task.imageUrls?.map(value => ns.storedImageThumbnailUrl(value)).find(Boolean);
     if (url) {
-      const image = document.createElement('img'); image.src = url; image.alt = ''; image.loading = compact ? 'eager' : 'lazy'; image.decoding = 'async';
-      image.addEventListener('error', () => { image.remove(); visual.classList.add('is-unavailable'); }, { once: true });
+      const image = priorImages.get(url) || document.createElement('img');
+      if (!priorImages.has(url)) {
+        image.src = url; image.alt = ''; image.loading = compact ? 'eager' : 'lazy'; image.decoding = 'async';
+        image.addEventListener('error', () => { image.closest('.task-picture')?.classList.add('is-unavailable'); image.remove(); }, { once: true });
+      }
       visual.append(image);
     } else {
       visual.classList.add(task.active ? 'is-generating' : 'is-empty');
@@ -137,30 +140,54 @@
     placeholder.innerHTML = '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="6" width="22" height="20" rx="5" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="m6 23 7-7 5 5 4-4 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     visual.append(placeholder); return visual;
   }
+  let capsuleSignature = '', drawerSignature = '';
+  const taskCards = new Map();
   function render() {
     capsule.hidden = !restored || !owner();
     detailNext.hidden = !selected || !restored; detailNext.disabled = ns.state.isBusy;
     const tasks = [...registry.entries()].sort((a, b) => Date.parse(b[1].createdAt || '') - Date.parse(a[1].createdAt || ''));
     const recent = tasks.slice(0, 3), latest = recent[0]?.[1];
-    const stack = document.createElement('span'); stack.className = 'task-capsule-stack'; stack.setAttribute('aria-hidden', 'true');
-    for (const [, task] of recent.slice().reverse()) stack.append(taskPicture(task, true));
-    if (!latest) stack.append(taskPicture({} , true));
-    const caption = document.createElement('span'); caption.className = 'task-capsule-caption'; caption.textContent = latest ? promptPreview(latest.prompt || latest.settings?.prompt) : '最近创作';
-    const arrow = document.createElement('span'); arrow.className = 'task-capsule-arrow'; arrow.textContent = '↗'; arrow.setAttribute('aria-hidden', 'true');
-    capsule.replaceChildren(stack, caption, arrow); capsule.classList.toggle('has-active', activeCount > 0);
-    capsule.setAttribute('aria-label', `打开最近任务，${activeCount} 个进行中${unseen ? `，${unseen} 个新完成` : ''}`);
-    if (activeCount || unseen) {
-      const badge = document.createElement('span'); badge.className = `task-capsule-badge${unseen ? ' is-unread' : ''}`; badge.textContent = String(unseen || activeCount); badge.setAttribute('aria-hidden', 'true'); capsule.append(badge);
+    const nextCapsuleSignature = JSON.stringify([recent, activeCount, unseen]);
+    if (capsuleSignature !== nextCapsuleSignature) {
+      capsuleSignature = nextCapsuleSignature;
+      const priorCapsuleImages = new Map([...capsule.querySelectorAll('.task-picture')].map(visual => [visual.dataset.taskId, visual.querySelector('img')]));
+      const stack = document.createElement('span'); stack.className = 'task-capsule-stack'; stack.setAttribute('aria-hidden', 'true');
+      for (const [id, task] of recent.slice().reverse()) {
+        const priorImage = priorCapsuleImages.get(id);
+        const visual = taskPicture(task, true, priorImage ? new Map([[priorImage.getAttribute('src'), priorImage]]) : new Map());
+        visual.dataset.taskId = id; stack.append(visual);
+      }
+      if (!latest) stack.append(taskPicture({} , true));
+      const caption = document.createElement('span'); caption.className = 'task-capsule-caption'; caption.textContent = latest ? promptPreview(latest.prompt || latest.settings?.prompt) : '最近创作';
+      const arrow = document.createElement('span'); arrow.className = 'task-capsule-arrow'; arrow.textContent = '↗'; arrow.setAttribute('aria-hidden', 'true');
+      capsule.replaceChildren(stack, caption, arrow); capsule.classList.toggle('has-active', activeCount > 0);
+      capsule.setAttribute('aria-label', `打开最近任务，${activeCount} 个进行中${unseen ? `，${unseen} 个新完成` : ''}`);
+      if (activeCount || unseen) {
+        const badge = document.createElement('span'); badge.className = `task-capsule-badge${unseen ? ' is-unread' : ''}`; badge.textContent = String(unseen || activeCount); badge.setAttribute('aria-hidden', 'true'); capsule.append(badge);
+      }
     }
+    next.disabled = ns.state.isBusy;
+    const nextDrawerSignature = JSON.stringify([tasks, selected, ns.state.isBusy]);
+    if (drawerSignature === nextDrawerSignature) return;
+    drawerSignature = nextDrawerSignature;
     drawerCount.textContent = String(tasks.length); drawerCount.setAttribute('aria-label', `${tasks.length} 个任务`);
     const focused = list.contains(document.activeElement) ? document.activeElement.dataset.actionKey : '';
-    list.replaceChildren(); next.disabled = ns.state.isBusy;
+    for (const [id, cached] of taskCards) if (!registry.has(id)) { cached.node.remove(); taskCards.delete(id); }
+    let position = list.firstElementChild;
     for (const [id, task] of tasks) {
+      const signature = JSON.stringify([task, selected === id, ns.state.isBusy]);
+      const cached = taskCards.get(id);
+      if (cached?.signature === signature) {
+        if (cached.node !== position) list.insertBefore(cached.node, position);
+        position = cached.node.nextElementSibling;
+        continue;
+      }
       const card = document.createElement('article'); card.className = 'task-card'; card.classList.toggle('is-selected', selected === id);
       const open = document.createElement('button'); open.className = 'task-card-open'; open.dataset.actionKey = `open:${id}`;
       const prompt = task.prompt || task.settings?.prompt || '未命名创作';
       open.setAttribute('aria-label', `${promptPreview(prompt)}，${taskLabel(task)}，查看详情`);
-      const visual = taskPicture(task);
+      const priorImages = new Map([...(cached?.node.querySelectorAll('img') || [])].map(img => [img.getAttribute('src'), img]));
+      const visual = taskPicture(task, false, priorImages);
       const status = document.createElement('span'); status.className = `task-card-status${task.active ? ' is-active' : ''}${task.status === 'submission_unknown' ? ' is-unknown' : ''}`; status.setAttribute('aria-label', taskLabel(task)); status.title = taskLabel(task);
       visual.append(status);
       if (task.requestedCount > 1) { const count = document.createElement('span'); count.className = 'task-card-count'; count.textContent = `${task.completedCount || 0}/${task.requestedCount}`; visual.append(count); }
@@ -168,9 +195,13 @@
       open.append(visual, label); open.onclick = () => openTask(id);
       const copy = document.createElement('button'); copy.className = 'task-card-copy'; copy.textContent = '↗'; copy.setAttribute('aria-label', '复制为新请求（含输入）'); copy.title = '复制为新请求（含输入）';
       copy.disabled = ns.state.isBusy; copy.dataset.actionKey = `copy:${id}`; copy.onclick = () => copyTask(id);
-      card.append(open, copy); list.append(card);
+      card.append(open, copy);
+      if (cached) { if (position === cached.node) position = cached.node.nextElementSibling; cached.node.remove(); }
+      list.insertBefore(card, position); position = card.nextElementSibling;
+      taskCards.set(id, { signature, node: card });
     }
-    if (!tasks.length) { const empty = document.createElement('p'); empty.className = 'task-gallery-empty'; empty.textContent = '你的创作会出现在这里'; list.append(empty); }
+    while (position) { const next = position.nextElementSibling; position.remove(); position = next; }
+    if (!tasks.length) { list.replaceChildren(); const empty = document.createElement('p'); empty.className = 'task-gallery-empty'; empty.textContent = '你的创作会出现在这里'; list.append(empty); }
     if (focused) [...list.querySelectorAll('button')].find(el => el.dataset.actionKey === focused)?.focus({ preventScroll: true });
   }
   function showSnapshot(task) {
@@ -307,6 +338,7 @@
       const feed = await ns.requestJson('/api/me/tasks', { signal: AbortSignal.timeout(20000) });
       if (!current(c) || !feed.ok || !Array.isArray(feed.json?.tasks)) return;
       activeCount = feed.json.activeCount; limit = feed.json.limit;
+      let completed = false;
       const visible = new Set(feed.json.tasks.map(t => t.clientRequestId || t.id));
       for (const [id, task] of registry) if (!visible.has(id) && !task.active && !task.unresolvedLegacy) registry.delete(id);
       for (const task of feed.json.tasks) {
@@ -317,10 +349,11 @@
           unseen++; const button = document.createElement('button'); button.textContent = `${promptPreview(task.prompt)} · 查看`;
           button.onclick = () => { if (current(c)) void openTask(id); }; notice.replaceChildren(button);
           ns.notifyGenerationComplete(registry.get(id), `${promptPreview(task.prompt)} · ${taskLabel(registry.get(id))}`);
-          ns.loadMe(); ns.loadMyLogs();
+          completed = true;
         }
         if (selected === id) { ns.state.result = registry.get(id); ns.renderResult({ focus: false }); }
       }
+      if (completed) { void ns.loadMe(); ns.markHistoryDirty(); }
       // One endpoint per active group, serialized; the next feed remains authoritative for settlement/assets.
       for (const task of feed.json.tasks.filter(t => t.active).slice(0, Math.max(1, limit))) {
         if (!current(c)) return;
@@ -335,6 +368,7 @@
   ns.resetAccountRuntime = () => {
     if (owner() && restored) { if (!selected) draft = captureDraft(); persist().catch(() => {}); }
     clearTimeout(timer); restored = false; registry = new Map(); selected = ''; draft = null; activeCount = 0; unseen = 0; revision++;
+    capsuleSignature = ''; drawerSignature = ''; taskCards.clear(); capsule.replaceChildren(); list.replaceChildren();
     hydrating = null; restoring = false; runner = null; notice.replaceChildren(); drawer.close(); capsule.hidden = true; detailNext.hidden = true;
     for (const id of ['previewHistoryDetailContent', 'previewHistoryDetailGallery', 'previewHistoryDialogSubtitle']) document.getElementById(id)?.replaceChildren();
     const detailImage = document.getElementById('previewHistoryDetailImage');

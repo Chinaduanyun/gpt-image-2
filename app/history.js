@@ -75,6 +75,7 @@
   }
 
   ns.getFilteredMyLogs = () => {
+    if (page.status !== 'idle' && ns.state.session?.token) return ns.state.myLogs.filter(isHistoryWork);
     const query = ns.state.historySearch.trim().toLowerCase();
     const filter = ns.state.historyFilter;
     return ns.state.myLogs.filter((log) => {
@@ -110,20 +111,53 @@
   }
   function renderHistoryImages(imageUrls) {
     if (!imageUrls.length) return '<div class="history-empty">暂无成功图片</div>';
-    return `<div class="history-images">${imageUrls.map((url, index) => {
-      const img = `<img src="${ns.escapeHtml(url)}" alt="历史图片 ${index + 1}" loading="lazy" decoding="async" onerror="this.closest('.history-thumb').classList.add('has-image-error');this.alt='历史图片加载失败'" />`;
-      // URL 协议不合法时不渲染链接，只显示图片，避免把不可信协议放进 href。
-      return ns.isSafeLinkUrl(url)
-        ? `<a class="history-thumb" href="${ns.escapeHtml(url)}" target="_blank" rel="noopener" title="打开图片 ${index + 1}">${img}</a>`
-        : `<div class="history-thumb">${img}</div>`;
-    }).join('')}</div>`;
+    const url = imageUrls[0], thumb = ns.storedImageThumbnailUrl?.(url);
+    const image = thumb ? `<img src="${ns.escapeHtml(thumb)}" alt="作品封面" loading="lazy" decoding="async" onerror="this.closest('.history-thumb').classList.add('has-image-error');this.removeAttribute('src')" />` : '<span>预览不可用，打开详情查看原图</span>';
+    return `<div class="history-images"><a class="history-thumb" href="${ns.escapeHtml(ns.isSafeLinkUrl(url) ? url : '#')}" title="查看作品详情">${image}</a>${imageUrls.length > 1 ? `<span class="preview-history-image-count">共 ${imageUrls.length} 张</span>` : ''}</div>`;
+  }
+
+  // Keyed reconciliation keeps unchanged cards (and their decoded thumbnails) alive.
+  function reconcileCards(cards) {
+    const list = ns.els.myLogsList;
+    if (typeof document === 'undefined' || !list.children) { list.innerHTML = cards.map(card => card.html).join(''); return; }
+    const focused = list.contains(document.activeElement) ? document.activeElement : null;
+    const focusAction = focused?.dataset?.historyAction, focusId = focused?.dataset?.logId;
+    const focusedRow = focused?.closest('.history-row');
+    const focusPreview = focused?.matches('.history-thumb, .history-empty');
+    const old = new Map([...list.children].filter(node => node.dataset?.logId).map(node => [node.dataset.logId, node]));
+    let position = list.firstElementChild;
+    for (const card of cards) {
+      let row = old.get(card.id);
+      if (!row || row.historySignature !== card.signature) {
+        const template = document.createElement('template'); template.innerHTML = card.html.trim();
+        const fresh = template.content.firstElementChild;
+        if (row) {
+          const images = new Map([...row.querySelectorAll('img[src]')].map(img => [img.getAttribute('src'), img]));
+          fresh.querySelectorAll('img[src]').forEach(img => { const prior = images.get(img.getAttribute('src')); if (prior) img.replaceWith(prior); });
+          // Keep the row identity, including open-dialog and focus references.
+          row.removeAttribute('data-preview-enhanced');
+          row.replaceChildren(...fresh.childNodes);
+          row.dataset.imageUrls = fresh.dataset.imageUrls;
+        } else row = fresh;
+        row.historySignature = card.signature;
+      }
+      old.delete(card.id);
+      if (row !== position) list.insertBefore(row, position);
+      position = row.nextElementSibling;
+    }
+    while (position) { const next = position.nextElementSibling; position.remove(); position = next; }
+    if (focused && !focused.isConnected) {
+      if (focusPreview) focusedRow?.querySelector('.history-thumb, .history-empty')?.focus({ preventScroll: true });
+      else [...list.querySelectorAll('[data-history-action]')].find(button => button.dataset.historyAction === focusAction && button.dataset.logId === focusId)?.focus({ preventScroll: true });
+    }
+    ns.syncHistoryDetail?.();
   }
 
   ns.renderMyLogs = (logs = null) => {
     if (Array.isArray(logs)) ns.state.myLogs = logs;
     const filtered = ns.getFilteredMyLogs();
     if (!ns.state.myLogs.some(isHistoryWork)) {
-      ns.els.myLogsList.innerHTML = '<div class="list-state">暂无作品。生成图片后会出现在这里。<span>当前列表最多显示最近 100 条。</span></div>';
+      ns.els.myLogsList.innerHTML = '<div class="list-state">暂无作品。生成图片后会出现在这里。<span>可搜索全部历史作品。</span></div>';
       return;
     }
     if (!filtered.length) {
@@ -131,8 +165,8 @@
       return;
     }
 
-    ns.els.myLogsList.innerHTML = filtered.map((log) => {
-      const imageUrls = Array.isArray(log.imageUrls) ? log.imageUrls : [];
+    reconcileCards(filtered.map((log) => {
+      const imageUrls = !log.assetsDeleted && Array.isArray(log.imageUrls) ? log.imageUrls : [];
       const referenceText = ns.referenceText(log);
       const status = ns.classifyLogStatus(log.status);
       const canReuse = (log.type === 'generation' || log.kind === 'batch' || log.kind === 'task') && log.id;
@@ -159,8 +193,8 @@
           ${canDelete ? `<button class="secondary compact danger-button" type="button" data-history-action="delete-assets" data-log-id="${ns.escapeHtml(log.id)}">永久删除图片</button>` : ''}
           ${canHide ? `<button class="secondary compact danger-button history-delete-btn" type="button" data-history-action="delete" data-log-id="${ns.escapeHtml(log.id)}">隐藏作品</button>` : `<button class="secondary compact history-delete-btn" type="button" disabled title="${ns.escapeHtml(deleteBlocker)}">不可隐藏</button>`}
         </div>` : '';
-      return `
-        <article class="history-row">
+      const html = `
+        <article class="history-row" data-log-id="${ns.escapeHtml(log.id)}" data-image-urls="${ns.escapeHtml(JSON.stringify(log.assetsDeleted ? [] : imageUrls))}">
           <div class="history-topline">
             <strong>${ns.escapeHtml(ns.formatDate(log.createdAt))}</strong>
             <span class="history-status ${status.className}">${ns.escapeHtml(status.label)}</span>
@@ -181,7 +215,8 @@
             ${renderHistoryImages(imageUrls)}
           </div>
         </article>`;
-    }).join('');
+      return { id: log.id, signature: JSON.stringify(log), html };
+    }));
   };
 
   async function applyHistoryLogToForm(log) {
@@ -206,38 +241,160 @@
     return revision === ns.getWorkspaceDraftRevision?.();
   }
 
-  ns.loadMyLogs = async () => {
-    if (!ns.state.session?.token) return;
-    const epoch = ns.state.accountEpoch;
-    const token = ns.state.session.token;
-    ns.els.refreshMyLogsBtn.disabled = true;
-    ns.els.myLogsList.innerHTML = '<div class="list-state is-loading">正在加载最近 100 条作品记录...</div>';
-    try {
-      const result = await ns.requestJson('/api/me/logs?limit=100');
-      if (epoch !== ns.state.accountEpoch || token !== ns.state.session?.token) return;
-      if (!result.ok) {
-        ns.els.myLogsList.innerHTML = `<div class="list-state is-error">${ns.escapeHtml(ns.getErrorMessage(result, '作品库加载失败。'))}<button class="secondary compact" type="button" data-history-action="retry-load">重试</button></div>`;
-        return;
-      }
-      ns.renderMyLogs(result.json?.logs || []);
-    } catch (error) {
-      if (!ns.isAccountContextCurrent(epoch, token)) return;
-      ns.els.myLogsList.innerHTML = `<div class="list-state is-error">作品库加载失败：${ns.escapeHtml(error?.message || error)}<button class="secondary compact" type="button" data-history-action="retry-load">重试</button></div>`;
-    } finally {
-      if (ns.isAccountContextCurrent(epoch, token)) ns.els.refreshMyLogsBtn.disabled = false;
-    }
+  let libraryVisible = false, generation = 0, queryGeneration = 0, dirtyRevision = 0, retryAppend = false, request = null, refreshTimer = null;
+  let page = { status: 'idle', nextCursor: null, hasMore: false, total: 0, dirty: false, error: '' };
+  const control = (id) => typeof document === 'undefined' ? null : document.getElementById(id);
+  function pageUi() {
+    const more = control('historyLoadMore'), meta = control('historyPageStatus');
+    if (meta) meta.textContent = `已加载 ${ns.state.myLogs.length} / ${page.total} 条作品${page.status === 'loading' ? ` · ${page.refreshNotice || '加载中…'}` : page.error ? ` · ${page.error}` : page.dirty ? ' · 有更新待刷新' : ''}`;
+    if (more) { more.hidden = !page.hasMore && page.status !== 'error'; more.disabled = page.status === 'loading'; more.textContent = page.status === 'error' ? '加载失败，重试' : '加载更多'; more.onclick = () => ns.requestHistoryPage({ append: page.status === 'error' ? retryAppend : page.hasMore && ns.state.myLogs.length > 0 && !page.dirty }); }
+    if (ns.els.refreshMyLogsBtn) ns.els.refreshMyLogsBtn.disabled = page.status === 'loading';
+  }
+  ns.getHistoryPageState = () => ({ ...page, generation });
+  ns.resetHistoryLibrary = () => {
+    queryGeneration++; generation++; request?.controller.abort(); request = null;
+    window.clearTimeout(refreshTimer); refreshTimer = null;
+    page = { status: 'idle', nextCursor: null, hasMore: false, total: 0, dirty: false, error: '' };
+    ns.syncHistoryDetail?.(); pageUi();
   };
+  ns.requestHistoryPage = ({ append = false, reset = false } = {}) => {
+    if (reset) {
+      queryGeneration++; generation++; request?.controller.abort(); request = null;
+      page = { status: 'idle', nextCursor: null, hasMore: false, total: 0, dirty: false, error: '' };
+      ns.renderMyLogs(); ns.syncHistoryDetail?.(); pageUi();
+    }
+    if (!ns.state.session?.token || !libraryVisible || document.hidden) return Promise.resolve();
+    if (request) return request.promise;
+    const epoch = ns.state.accountEpoch, token = ns.state.session.token, version = generation, startedDirtyRevision = dirtyRevision;
+    const controller = new AbortController();
+    const run = { controller, promise: null, mutations: new Map() }; request = run;
+    const valid = () => request === run && generation === version && ns.isAccountContextCurrent(epoch, token);
+    const old = ns.state.myLogs;
+    let appendResults = append, boundary = !reset && !append ? old.at(-1) : null;
+    const query = new URLSearchParams({ paged: '1', limit: '24', q: ns.state.historySearch.trim(), filter: ns.state.historyFilter });
+    retryAppend = append;
+    page.status = 'loading'; page.error = ''; page.refreshNotice = ''; pageUi();
+    if (!old.length) ns.els.myLogsList.innerHTML = '<div class="list-state is-loading">正在加载作品…</div>';
+    run.promise = (async () => {
+      try {
+        let cursor = append ? page.nextCursor : null, logs = [], envelope, recoveredCursor = false;
+        do {
+          if (cursor) query.set('cursor', cursor); else query.delete('cursor');
+          const result = await ns.requestJson(`/api/me/logs?${query}`, { signal: controller.signal });
+          if (!valid()) return;
+          if (!result.ok && result.status === 400 && result.json?.error?.code === 'history_cursor_invalid' && append && cursor && !recoveredCursor) {
+            // A server restart expires signed cursors. Recover once, retaining this query/account guard.
+            recoveredCursor = true; appendResults = false; boundary = null; logs = []; cursor = null;
+            retryAppend = false; page.nextCursor = null; page.hasMore = false;
+            page.refreshNotice = '作品列表已更新，正在重新加载首页…'; pageUi();
+            continue;
+          }
+          if (!result.ok || !Array.isArray(result.json?.logs) || !result.json?.page) throw new Error(ns.getErrorMessage(result, '作品库加载失败。'));
+          envelope = result.json.page;
+          logs.push(...result.json.logs);
+          const previousCursor = cursor; cursor = envelope.nextCursor;
+          if (!boundary || !envelope.hasMore || logs.some(log => compareHistoryBoundary(log, boundary) >= 0)) break;
+          if (!cursor || cursor === previousCursor) throw new Error('分页响应无效，请重试。');
+        } while (true);
+        if (!valid()) return;
+        const unique = new Map((appendResults ? old : []).map(log => [log.id, log]));
+        for (const log of logs) unique.set(log.id, log);
+        let reconciled = [...unique.values()], total = envelope.total;
+        for (const [id, assetsOnly] of run.mutations) {
+          const patch = patchHistoryItem(reconciled, id, assetsOnly);
+          reconciled = patch.logs; total = Math.max(0, total - Number(patch.removed));
+        }
+        ns.state.myLogs = reconciled;
+        page = { status: 'loaded', nextCursor: envelope.nextCursor, hasMore: envelope.hasMore, total, dirty: startedDirtyRevision !== dirtyRevision, error: '' };
+        ns.renderMyLogs(); ns.syncHistoryDetail?.();
+      } catch (error) {
+        if (!valid() || controller.signal.aborted) return;
+        page.status = 'error'; page.error = error.message || '作品库加载失败。';
+        if (!ns.state.myLogs.length) ns.els.myLogsList.innerHTML = `<div class="list-state is-error">${ns.escapeHtml(page.error)}<button type="button" class="secondary compact" data-history-action="retry-load">重试</button></div>`;
+      } finally {
+        if (valid()) { request = null; pageUi(); if (page.dirty && page.status !== 'error') ns.markHistoryDirty(); }
+      }
+    })();
+    return run.promise;
+  };
+  ns.ensureHistoryLibrary = () => {
+    if (libraryVisible && (page.status === 'idle' || page.dirty) && page.status !== 'error') return ns.requestHistoryPage();
+    return Promise.resolve();
+  };
+  let sentinelObserver = null;
+  ns.setHistoryLibraryVisible = (visible) => {
+    libraryVisible = visible;
+    if (!visible) {
+      window.clearTimeout(refreshTimer); refreshTimer = null;
+      if (request) { generation++; request.controller.abort(); request = null; page.status = ns.state.myLogs.length ? 'loaded' : 'idle'; page.dirty = true; pageUi(); }
+      return;
+    }
+    if (!sentinelObserver && typeof IntersectionObserver !== 'undefined' && control('historyPageSentinel')) {
+      let near = false;
+      sentinelObserver = new IntersectionObserver(entries => {
+        const entering = entries.some(entry => entry.isIntersecting);
+        if (entering && !near && libraryVisible && page.status === 'loaded' && page.hasMore) void ns.requestHistoryPage({ append: true });
+        near = entering;
+      }, { rootMargin: '500px' });
+      sentinelObserver.observe(control('historyPageSentinel'));
+    }
+    return ns.ensureHistoryLibrary();
+  };
+  ns.markHistoryDirty = () => {
+    dirtyRevision++; page.dirty = true; pageUi();
+    if (!libraryVisible || document.hidden || request || refreshTimer) return;
+    refreshTimer = window.setTimeout(() => { refreshTimer = null; void ns.requestHistoryPage(); }, 100);
+  };
+  // Legacy notification/refresh callers remain safe while the library is hidden.
+  ns.loadMyLogs = () => {
+    if (!libraryVisible || document.hidden) { ns.markHistoryDirty(); return Promise.resolve(); }
+    return ns.requestHistoryPage();
+  };
+  if (typeof document !== 'undefined') document.addEventListener?.('visibilitychange', () => {
+    if (!document.hidden) void ns.ensureHistoryLibrary();
+    else if (request) { generation++; request.controller.abort(); request = null; page.status = ns.state.myLogs.length ? 'loaded' : 'idle'; page.dirty = true; pageUi(); }
+  });
+
+  // Match the server's parsed-time DESC, then batchId/id DESC keyset order.
+  function compareHistoryBoundary(log, boundary) {
+    const time = Date.parse(log.createdAt || '') || 0, boundaryTime = Date.parse(boundary.createdAt || '') || 0;
+    const id = String(log.batchId || log.id || ''), boundaryId = String(boundary.batchId || boundary.id || '');
+    return boundaryTime - time || (id < boundaryId ? 1 : id > boundaryId ? -1 : 0);
+  }
+
+  function patchHistoryItem(logs, logId, assetsOnly) {
+    const present = logs.some(log => log.id === logId);
+    const remove = !assetsOnly || ns.state.historyFilter === 'completed';
+    return {
+      logs: remove ? logs.filter(log => log.id !== logId) : logs.map(log => log.id === logId ? { ...log, imageUrls: [], inputFiles: [], assetsDeleted: true } : log),
+      removed: present && remove
+    };
+  }
+  function removeHistoryItem(logId, assetsOnly, mutationQueryGeneration) {
+    if (mutationQueryGeneration === queryGeneration) {
+      generation++; request?.controller.abort(); request = null;
+      page.status = 'loaded'; page.error = '';
+    } else {
+      // A newer query owns its request/status/cursor. Patch its response only if it contains this item.
+      if (request) request.mutations.set(logId, assetsOnly && request.mutations.get(logId) !== false);
+      if (!ns.state.myLogs.some(log => log.id === logId)) return;
+    }
+    const patch = patchHistoryItem(ns.state.myLogs, logId, assetsOnly);
+    ns.state.myLogs = patch.logs;
+    if (patch.removed) page.total = Math.max(0, page.total - 1);
+    ns.renderMyLogs(); ns.syncHistoryDetail?.(); pageUi();
+  }
 
   ns.deleteHistoryLog = async (logId) => {
     if (!logId) return;
     const ok = window.confirm('确认隐藏这条作品吗？\n\n隐藏作品不会取消任务或退款；提交状态未知的独立作品也可隐藏，仍需管理员核查。管理员记录会保留用于审计和余额对账；参考图和成品不会因隐藏而删除。');
     if (!ok) return;
-    const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token, mutationQueryGeneration = queryGeneration;
     const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}`, { method: 'DELETE' });
     if (!ns.isAccountContextCurrent(epoch, token)) return;
     if (!result.ok) return ns.setStatus(ns.getErrorMessage(result, '隐藏作品失败。执行中、批次未知或其他未结算任务不能隐藏；独立的提交状态未知作品除外。'), 'error');
     ns.setStatus('作品已从个人作品库隐藏，账本记录仍保留。', 'ok');
-    await ns.loadMyLogs();
+    removeHistoryItem(logId, false, mutationQueryGeneration);
   };
 
   let historySearchTimer = null;
@@ -246,32 +403,37 @@
     historySearchTimer = null;
   };
   ns.handleHistorySearch = () => {
+    if (ns.state.session?.token && request) { generation++; request.controller.abort(); request = null; page.status = ns.state.myLogs.length ? 'loaded' : 'idle'; pageUi(); }
     if (historySearchTimer) window.clearTimeout(historySearchTimer);
     // 输入防抖 ~250ms，避免每敲一个字就整列表重渲染。
     historySearchTimer = window.setTimeout(() => {
       historySearchTimer = null;
       ns.state.historySearch = ns.els.historySearchInput?.value || '';
-      ns.renderMyLogs();
+      if (!ns.state.session?.token) return ns.renderMyLogs();
+      ns.state.myLogs = [];
+      void ns.requestHistoryPage({ reset: true });
     }, 250);
   };
   ns.handleHistoryFilter = () => {
     ns.state.historyFilter = ns.els.historyFilterSelect?.value || 'all';
-    ns.renderMyLogs();
+    if (!ns.state.session?.token) return ns.renderMyLogs();
+    ns.state.myLogs = [];
+    void ns.requestHistoryPage({ reset: true });
   };
   ns.handleHistoryClick = async (event) => {
     const button = event.target?.closest('[data-history-action]');
     if (!button) return;
     const action = button.dataset.historyAction;
-    if (action === 'retry-load') return ns.loadMyLogs();
+    if (action === 'retry-load') return ns.requestHistoryPage({ append: retryAppend });
     const logId = button.dataset.logId;
     const log = ns.findHistoryLog(logId);
     if (action === 'delete-assets') {
       if (!window.confirm('永久删除此作品的参考图及成品？不可恢复，财务记录仍保留。')) return;
-      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token, mutationQueryGeneration = queryGeneration;
       const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}/assets`, { method: 'DELETE', headers: { 'X-Confirm-Delete': 'permanent' } });
       if (!ns.isAccountContextCurrent(epoch, token)) return;
       if (!result.ok) return ns.setStatus('删除失败。', 'error');
-      return ns.loadMyLogs();
+      return removeHistoryItem(logId, true, mutationQueryGeneration);
     }
     if (action === 'delete') return ns.deleteHistoryLog(logId);
     if (!log) return;

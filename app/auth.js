@@ -191,6 +191,7 @@
     ns.state.historySearch = '';
     ns.state.historyFilter = 'all';
     ns.resetHistorySearch?.();
+    ns.resetHistoryLibrary?.();
     for (const key of ['myLogsList', 'adminUsersBody', 'adminLogsBody', 'adminStatus', 'currentUserEmail', 'currentUserBalance', 'editSourceNote', 'editStatus', 'editEmptyStatus', 'referenceStatus', 'status', 'resultLive', 'progressHint']) ns.els?.[key]?.replaceChildren();
     for (const key of ['historySearchInput', 'adminAddEmail', 'adminAddName']) if (ns.els?.[key]) ns.els[key].value = '';
     if (ns.els?.historyFilterSelect) ns.els.historyFilterSelect.value = 'all';
@@ -271,7 +272,7 @@
       if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
       if (ns.state.pendingRequest) await ns.recoverPendingGeneration({ automatic: true });
       if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
-      await ns.loadMyLogs();
+      await ns.ensureHistoryLibrary?.();
       if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
       if (ns.state.session.user.isAdmin) await ns.loadAdminData();
       if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
@@ -323,7 +324,7 @@
     if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
     if (ns.state.pendingRequest) await ns.recoverPendingGeneration({ automatic: true });
     if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
-    await ns.loadMyLogs();
+    await ns.ensureHistoryLibrary?.();
     if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;
     if (ns.state.session.user.isAdmin) await ns.loadAdminData();
     if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;

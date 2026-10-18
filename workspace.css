@@ -2494,3 +2494,8 @@
 
 /* Account-owned controls must honor hidden despite shared button display rules. */
 .task-capsule[hidden], #detailNewDraftBtn[hidden] { display: none !important; }
+
+/* Keep scroll pagination observable and the keyboard fallback separate from cards. */
+#historyPageSentinel { height: 1px; }
+.preview-page #historyLoadMore { display: block; margin: 24px auto; }
+.preview-page #historyLoadMore[hidden] { display: none; }

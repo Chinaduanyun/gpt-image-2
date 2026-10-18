@@ -294,7 +294,7 @@
         <label class="sr-only" for="historySearchInput">搜索作品</label>
         <div class="preview-search-field">
           <span aria-hidden="true">⌕</span>
-          <input id="historySearchInput" type="text" placeholder="搜索提示词、模型、Batch ID 或 Task ID" />
+          <input id="historySearchInput" type="text" maxlength="1000" placeholder="搜索提示词、模型、Batch ID 或 Task ID" />
         </div>
         <label class="sr-only" for="historyFilterSelect">筛选作品</label>
         <select id="historyFilterSelect">
@@ -307,8 +307,10 @@
         </select>
       </div>
 
-      <div class="preview-library-meta">最近 100 条记录 · 支持批次与子任务 ID 搜索</div>
+      <div id="historyPageStatus" class="preview-library-meta" role="status" aria-live="polite">进入作品库后加载 · 支持全部历史搜索</div>
       <div id="myLogsList" class="log-list mini-note">暂无作品。</div>
+      <div id="historyPageSentinel" aria-hidden="true"></div>
+      <button id="historyLoadMore" class="secondary" type="button" hidden>加载更多</button>
     </section>
 
     <section class="preview-view preview-edit" data-preview-view="edit" aria-labelledby="editTitle" hidden>
