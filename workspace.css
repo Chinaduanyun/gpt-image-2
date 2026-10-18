@@ -2052,12 +2052,14 @@
   }
 
   .preview-history-dialog-body {
-    grid-template-columns: 1fr;
+    /* A single scrolling flow must not compress the image and metadata into
+       implicit grid rows when a long prompt exceeds the dialog height. */
+    display: block;
     overflow-y: auto;
   }
 
   .preview-history-detail-visual {
-    min-height: 0;
+    grid-template-rows: auto auto;
   }
 
   .preview-history-detail-stage {
@@ -2065,6 +2067,7 @@
   }
 
   .preview-history-detail-stage img {
+    height: auto;
     max-height: 52dvh;
   }
 

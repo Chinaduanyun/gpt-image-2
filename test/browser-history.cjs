@@ -13,7 +13,7 @@ const ledger = { id: 'ledger', type: 'balance_adjustment', kind: 'batch', prompt
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.QA_BROWSER_EXECUTABLE ? { executablePath: process.env.QA_BROWSER_EXECUTABLE } : { channel: 'chrome' }) });
   try {
-    for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 1000 }, { width: 402, height: 874 }, { width: 390, height: 844 }, { width: 390, height: 600 }, { width: 768, height: 1024 }]) {
       const context = await browser.newContext({ viewport, serviceWorkers: 'block' });
       const page = await context.newPage();
       const errors = [];
@@ -83,6 +83,29 @@ const ledger = { id: 'ledger', type: 'balance_adjustment', kind: 'batch', prompt
         assert.equal(await page.locator('#previewHistoryDetailContent [data-history-action="delete"]').count(), 0);
         await page.locator('#previewHistoryDialogClose').click();
       }
+      // Long metadata and multi-image details must flow below the image instead
+      // of shrinking implicit grid rows until the gallery/content overlap it.
+      await render([{ ...batch, prompt: '制作一张正式银行青年案例宣讲PPT使用的局部概念插画。'.repeat(35), settings: { n: 2, size: '4:3', resolution: '1k' }, requestedCount: 2, imageUrls: ['/fixture.svg', '/fixture.svg?second'], children: [batch.children[0], { ...batch.children[0], index: 1 }] }]);
+      await page.locator('#myLogsList [data-preview-history-detail]').first().click();
+      await page.locator('#previewHistoryDetailImage').evaluate(image => image.decode());
+      const layout = await page.evaluate(() => {
+        const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; };
+        return { visual: box('.preview-history-detail-visual'), stage: box('.preview-history-detail-stage'), gallery: box('.preview-history-detail-gallery-row'), content: box('.preview-history-detail-content'), body: box('.preview-history-dialog-body'), dialog: box('#previewHistoryDialog'), scrollWidth: document.querySelector('.preview-history-dialog-body').scrollWidth, clientWidth: document.querySelector('.preview-history-dialog-body').clientWidth };
+      });
+      assert.ok(layout.gallery.top >= layout.stage.bottom, `gallery overlaps main image: ${JSON.stringify(layout)}`);
+      if (viewport.width <= 920) {
+        assert.ok(layout.content.top >= layout.visual.bottom, `details overlap image/gallery: ${JSON.stringify(layout)}`);
+        assert.ok(layout.dialog.top >= 0 && layout.dialog.bottom <= viewport.height, 'dialog stays within the viewport');
+        assert.ok(layout.scrollWidth <= layout.clientWidth + 1, 'detail body has no horizontal overflow');
+      }
+      await page.locator('#previewHistoryDetailGallery button').nth(1).click();
+      assert.equal(await page.locator('#previewHistoryDetailGallery button').nth(1).getAttribute('class'), 'is-active');
+      await page.locator('#previewHistoryDetailContent [data-history-action="regenerate"]').scrollIntoViewIfNeeded();
+      assert.equal(await page.locator('#previewHistoryDetailContent [data-history-action="regenerate"]').isVisible(), true);
+      await page.screenshot({ path: `/tmp/image-history-detail-${viewport.width}x${viewport.height}-scrolled.png` });
+      await page.locator('.preview-history-dialog-body').evaluate(body => { body.scrollTop = 0; });
+      await page.screenshot({ path: `/tmp/image-history-detail-${viewport.width}x${viewport.height}.png` });
+      await page.locator('#previewHistoryDialogClose').click();
       for (const shape of [{ type: 'generation' }, { kind: 'task', billing: { settled: false } }]) {
         await render([{ id: 'unknown', ...shape, status: 'submission_unknown', chargedMicros: 306000, settled: false, billingVersion: 'fixed-quote-v2' }]);
         assert.equal(await page.locator('#myLogsList [data-history-action="delete"]').count(), 1);
