@@ -196,8 +196,12 @@ const work = index => ({ id: `work-${index}`, kind: 'task', type: 'generation', 
     await coldPage.waitForFunction(() => ImageGen.state.myLogs.length === 24 && ImageGen.getHistoryPageState().status === 'loaded');
     assert.equal(galleryReads().length, beforeCold + 1); await cold.close();
     // Review regressions run through production event handlers and actual delayed DELETE responses.
-    const reviewContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-    await reviewContext.route('**/api/**', routes);
+    const reviewContext = await browser.newContext({ viewport: { width: 1000, height: 600 } });
+    await reviewContext.route('**/api/**', async route => {
+      // Let the empty-list intersection settle while loading; these cases explicitly drive append.
+      if (new URL(route.request().url()).pathname === '/api/me/logs') await new Promise(resolve => setTimeout(resolve, 60));
+      await routes(route);
+    });
     await reviewContext.addInitScript(() => { localStorage.setItem('imageGenEmail', 'a@test.invalid'); localStorage.setItem('imageGenToken', 'token-a@test.invalid'); });
     const reviewPage = await reviewContext.newPage(); reviewPage.on('pageerror', error => errors.push(error.message)); reviewPage.on('dialog', dialog => dialog.accept());
     const reviewLoaded = count => reviewPage.waitForFunction(n => ImageGen.state.myLogs.length === n && ImageGen.getHistoryPageState().status === 'loaded', count);
@@ -206,7 +210,7 @@ const work = index => ({ id: `work-${index}`, kind: 'task', type: 'generation', 
     for (const assetsOnly of [false, true]) for (const timing of ['while-loading', 'after-loaded']) {
       works = Array.from({ length: 30 }, (_, i) => ({ ...work(30 - i), prompt: 'review query B' }));
       const target = { ...work(500), prompt: 'query A item only' }; works.unshift(target);
-      await reviewPage.evaluate(async () => { ImageGen.state.historySearch = ''; ImageGen.els.historySearchInput.value = ''; ImageGen.state.myLogs = []; await ImageGen.requestHistoryPage({ reset: true }); });
+      await reviewPage.evaluate(async () => { scrollTo(0, 0); ImageGen.state.historySearch = ''; ImageGen.els.historySearchInput.value = ''; ImageGen.state.myLogs = []; await ImageGen.requestHistoryPage({ reset: true }); });
       await reviewLoaded(24);
       let releaseDelete, releaseQuery, notifyDelete, notifyQuery;
       const deletingStarted = new Promise(resolve => { notifyDelete = resolve; }), queryStarted = new Promise(resolve => { notifyQuery = resolve; });
@@ -232,7 +236,7 @@ const work = index => ({ id: `work-${index}`, kind: 'task', type: 'generation', 
     for (const filter of ['completed', 'all']) {
       works = Array.from({ length: 30 }, (_, i) => work(30 - i));
       await reviewPage.evaluate(async selectedFilter => {
-        ImageGen.state.historySearch = ''; ImageGen.els.historySearchInput.value = ''; ImageGen.state.historyFilter = selectedFilter;
+        scrollTo(0, 0); ImageGen.state.historySearch = ''; ImageGen.els.historySearchInput.value = ''; ImageGen.state.historyFilter = selectedFilter;
         ImageGen.state.myLogs = []; await ImageGen.requestHistoryPage({ reset: true });
         window.unaffectedCover = document.querySelector('.history-row[data-log-id="work-29"] img');
       }, filter);
