@@ -96,7 +96,7 @@ test('creation 1k x4 versus edit 4k x1: confirmation and submitted settings matc
   assert.equal(expected.totalMicros, 850000);
   await ns.runGeneration(editSettings);
   assert.equal(confirmations.length, 1);
-  assert.ok(confirmations[0].startsWith('固定报价 ¥0.850，'));
+  assert.equal(confirmations[0], '生成 1 张，费用 ¥0.850。继续？');
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, '/api/api-market/v1/images/generations');
   assert.deepEqual(requests[0].body, { ...editSettings, bestEffortAccepted: true });
@@ -118,7 +118,7 @@ test('all five pricing overrides drive policy, price map, quality, pixels and co
     const expected = assertBackendPrice(ns, settings);
     await ns.runGeneration(settings);
     assert.equal(confirmations.length, 1);
-    assert.ok(confirmations[0].startsWith(`固定报价 ${ns.formatMicros(expected.totalMicros)}，`));
+    assert.equal(confirmations[0], `生成 ${settings.n} 张，${expected.isMaximum ? '最高' : '费用'} ${ns.formatMicros(expected.totalMicros)}。继续？`);
     assert.deepEqual(requests[0].body, { ...settings, bestEffortAccepted: true });
   }
 });

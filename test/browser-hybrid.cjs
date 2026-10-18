@@ -36,7 +36,7 @@ const { chromium } = require('playwright');
     await page.evaluate(() => { ImageGen.polling.initialDelayMs = 10; ImageGen.polling.intervalMs = 20; ImageGen.els.prompt.value = 'A small green tree'; });
     await page.locator('#runBtn').click();
     await page.waitForFunction(() => ImageGen.state.result?.status === 'completed' && !ImageGen.state.isBusy);
-    assert.ok(dialogs.some((text) => text.includes('尽力满足') && text.includes('固定报价')));
+    assert.deepEqual(dialogs, ['生成 1 张，费用 ¥0.306。继续？']);
     assert.equal(calls, 1);
     await page.waitForFunction(() => document.querySelector('.result-thumb').textContent.includes('80 × 60'));
     const cookies = await context.cookies(); assert.ok(cookies.some((cookie) => cookie.name === 'imageStudioStagingToken')); assert.ok(!cookies.some((cookie) => cookie.name === 'imageGenToken'));

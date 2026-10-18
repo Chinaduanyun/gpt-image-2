@@ -6,6 +6,14 @@ const source = fs.readFileSync(require.resolve('../app/workspace.js'), 'utf8');
 const start = source.indexOf('  function promptPreview(value) {');
 const end = source.indexOf('  function taskLabel', start);
 const preview = vm.runInNewContext(`${source.slice(start, end)}; promptPreview`);
+test('composer omits redundant labels and explanatory price rows', () => {
+  const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+  for (const text of ['preview-model-badge', 'API Market', 'id="priceDetail"', 'id="priceBalanceText"', '描述你的画面', '浏览最近生成的作品，复用参数，继续迭代。']) {
+    assert.equal(html.includes(text), false, text);
+  }
+  assert.ok(html.includes('id="priceTotal"'));
+  assert.ok(html.includes('id="priceWarning"'));
+});
 test('task captions retain exactly the first 15 code points and ellipsis only on overflow', () => {
   assert.equal(preview('一二三四五六七八九十一二三四五六七八九十'), '一二三四五六七八九十一二三四五…');
   assert.equal(preview('123456789012345'), '123456789012345');

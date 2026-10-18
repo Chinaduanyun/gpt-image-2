@@ -108,10 +108,8 @@
 
     if (!estimate.ok) {
       ns.els.priceTotal.textContent = '--';
-      ns.els.priceDetail.textContent = `价格配置异常：${estimate.error}`;
-      ns.els.priceBalanceText.textContent = '';
-      ns.els.priceWarning.textContent = '';
-      ns.els.priceWarning.classList.add('hidden');
+      ns.els.priceWarning.textContent = `价格配置异常：${estimate.error}`;
+      ns.els.priceWarning.classList.remove('hidden');
       ns.els.runBtn.disabled = true;
       ns.updateAdvancedSummary();
       return;
@@ -121,24 +119,14 @@
     ns.els.runBtn.disabled = ns.state.isBusy;
     if (estimate.isMaximum) {
       ns.els.priceTotal.textContent = `最高 ${ns.formatMicros(estimate.totalMicros)}`;
-      ns.els.priceDetail.textContent = `当前组合没有精确价格表，将按最高单张 ${ns.formatMicros(estimate.unitMicros)} × ${n} 张预扣。`;
       warnings.push(`本次任务最高可达 ${ns.formatMicros(estimate.totalMicros)}。`);
     } else {
       ns.els.priceTotal.textContent = ns.formatMicros(estimate.totalMicros);
-      ns.els.priceDetail.textContent = !ns.isOfficialModel() && n > 1
-        ? `${estimate.detail}。总预扣 ${ns.formatMicros(estimate.totalMicros)}；${n} 个子任务分别应用每张最低 ${ns.formatMicros(estimate.minimumPerImageMicros)}。`
-        : `${estimate.detail}。建议先用低价配置试图，满意后再提高质量。`;
     }
 
-    if (ns.els.priceBalanceText) {
-      const balanceMicros = ns.state.session?.user?.balanceMicros;
-      if (balanceMicros !== undefined && balanceMicros !== null) {
-        const remainingMicros = Number(balanceMicros) - estimate.totalMicros;
-        ns.els.priceBalanceText.textContent = `当前余额 ${ns.formatMicros(balanceMicros)}，预计生成后剩余 ${ns.formatMicros(Math.max(0, remainingMicros))}。`;
-        if (remainingMicros < 0) warnings.push('当前余额可能不足，请联系管理员充值。');
-      } else {
-        ns.els.priceBalanceText.textContent = '';
-      }
+    const balanceMicros = ns.state.session?.user?.balanceMicros;
+    if (balanceMicros !== undefined && balanceMicros !== null && Number(balanceMicros) < estimate.totalMicros) {
+      warnings.push('当前余额可能不足，请联系管理员充值。');
     }
 
     if (ns.isOfficialModel() && ns.els.quality.value === 'high') warnings.push('当前为高清 high，价格明显高于 low。建议先用 low 试图。');

@@ -250,7 +250,8 @@
     ns.els.resultActions?.classList.remove('hidden');
     updateResultGrid(children, settings);
     const countText = result.kind === 'batch' ? `${successful}/${children.length} 成功${failed ? ` · ${failed} 失败` : ''}${unknown ? ` · ${unknown} 未知` : ''}` : `${successful || children.length} 张`;
-    ns.els.resultSummary.textContent = `${settings.model || 'API Market'} · ${settings.size || '-'} · ${settings.resolution || '-'} · ${countText}`;
+    ns.els.resultSummary.textContent = `${settings.model || '图片生成'} · ${settings.size || '-'} · ${settings.resolution || '-'} · ${countText}`;
+    ns.els.resultSummary.classList.remove('hidden');
     const id = result.batchId || result.taskId || '';
     ns.els.taskIdText.textContent = id ? `${result.kind === 'batch' ? 'Batch ID' : 'Task ID'}: ${id}` : '请求已保存，等待服务端返回任务编号';
     ns.els.taskIdText.classList.remove('hidden');
@@ -277,7 +278,8 @@
     ns.els.taskIdText.classList.add('hidden');
     ns.els.taskIdText.textContent = '';
     ns.els.debugOutput.textContent = '';
-    ns.els.resultSummary.textContent = 'API Market';
+    ns.els.resultSummary.textContent = '';
+    ns.els.resultSummary.classList.add('hidden');
   };
 
   ns.handleClear = async () => {

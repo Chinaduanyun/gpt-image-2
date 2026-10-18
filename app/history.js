@@ -277,8 +277,7 @@
       if (!applyHistoryLogToForm(log)) return;
       const estimate = ns.estimatePrice();
       if (!estimate.ok) return ns.setStatus(`无法再次生成：${estimate.error || '价格配置异常。'}`, 'error');
-      const ok = window.confirm(`将创建一个全新的请求，复制原始张数和参数，并按当前价格预计收费 ${ns.formatMicros(estimate.totalMicros)}。确认继续吗？`);
-      if (ok) await ns.handleRun();
+      await ns.handleRun();
     }
   };
 })();

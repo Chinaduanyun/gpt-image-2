@@ -46,7 +46,7 @@ function createPricingHarness(model = 'gpt-image-2') {
       quality: element('low'), outputFormat: element('png'), outputCompression: element('90'),
       prompt: element('test'), promptStats: element(), advancedSummary: element(), modelNote: element(),
       officialSettings: element(), compressionField: element(), compressionValue: element(),
-      priceTotal: element(), priceDetail: element(), priceBalanceText: element(), priceWarning: element(),
+      priceTotal: element(), priceWarning: element(),
       runBtn: element()
     }
   };
@@ -111,7 +111,7 @@ test('missing selected model profile disables generation and reports configurati
   assert.equal(estimate.ok, false);
   ns.updatePriceEstimate();
   assert.equal(ns.els.runBtn.disabled, true);
-  assert.match(ns.els.priceDetail.textContent, /价格配置异常/);
+  assert.match(ns.els.priceWarning.textContent, /价格配置异常/);
 });
 
 test('removed price breakdown DOM and styles do not remain referenced', () => {
@@ -187,12 +187,11 @@ test('result rerun confirms exact micros and blocks unavailable pricing', async 
   assert.deepEqual(unavailable.statuses.at(-1), { message: '无法再次生成：missing profile', type: 'error' });
 });
 
-test('history rerun confirms exact micros and blocks unavailable pricing', async () => {
+test('history rerun delegates to the shared generation confirmation and blocks unavailable pricing', async () => {
   const event = { target: { closest: () => ({ dataset: { logId: 'log-1', historyAction: 'regenerate' } }) } };
   const available = createRerunHarness('app/history.js', { ok: true, totalMicros: 1200000 });
   await available.ns.handleHistoryClick(event);
-  assert.equal(available.confirmations.length, 1);
-  assert.match(available.confirmations[0], /micros:1200000/);
+  assert.equal(available.confirmations.length, 0);
   assert.equal(available.getRunCount(), 1);
 
   const unavailable = createRerunHarness('app/history.js', { ok: false, error: 'invalid profile' });

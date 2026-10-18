@@ -125,7 +125,9 @@ test('no extra reference preserves legacy prompt and a single-image request, str
   await ns.handleEditSubmit();
   assert.equal(submitted[0].prompt, ns.els.editPrompt.value);
   assert.equal(submitted[0].image_urls.length, 1);
-  assert.match(confirmations[0], /没有任何标注/);
+  assert.equal(confirmations.length, 1);
+  assert.match(confirmations[0], /修改 1 张/);
+  assert.doesNotMatch(confirmations[0], /没有任何标注/);
 });
 
 test('role guidance cannot turn an empty prompt into an implicit edit, and counts toward 8000 chars', async () => {

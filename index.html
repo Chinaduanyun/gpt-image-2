@@ -74,14 +74,6 @@
       <h1 id="workspaceTitle" class="sr-only" tabindex="-1">创作工作台</h1>
 
       <aside class="preview-composer" aria-label="图片生成设置">
-        <div class="preview-composer-head">
-          <div>
-            <span class="preview-eyebrow">Create</span>
-            <h2>描述你的画面</h2>
-          </div>
-          <span class="preview-model-badge">API Market</span>
-        </div>
-
         <div class="preview-composer-scroll">
           <div class="field preview-model-field">
             <label for="model">生成模式</label>
@@ -206,8 +198,6 @@
               <span>预计费用</span>
               <strong id="priceTotal">¥0.000</strong>
             </div>
-            <div id="priceDetail" class="price-detail">选择参数后显示估算价格。</div>
-            <div id="priceBalanceText" class="price-balance mini-note"></div>
             <div id="priceWarning" class="price-warning hidden"></div>
           </div>
 
@@ -230,7 +220,7 @@
               <input id="notifyToggle" type="checkbox" />
               <span>完成时通知我</span>
             </label>
-            <span id="resultSummary" class="chip">API Market</span>
+            <span id="resultSummary" class="chip hidden"></span>
           </div>
         </div>
 
@@ -292,7 +282,6 @@
         <div>
           <span class="preview-eyebrow">Library</span>
           <h1 id="libraryTitle" tabindex="-1">我的作品库</h1>
-          <p>浏览最近生成的作品，复用参数，继续迭代。</p>
         </div>
         <button id="refreshMyLogsBtn" class="secondary" type="button">刷新作品</button>
       </div>

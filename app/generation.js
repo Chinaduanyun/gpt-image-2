@@ -467,8 +467,9 @@
     }
     const settings = ns.getSettings();
     const confirmLabel = estimate.isMaximum ? `最高预扣 ${ns.formatMicros(estimate.totalMicros)}` : `预计总价 ${ns.formatMicros(estimate.totalMicros)}`;
-    const quickBatchNote = !ns.isOfficialModel() && settings.n > 1 ? `\n将同时提交 ${settings.n} 个独立单图任务，每个任务最低收费 ${ns.formatMicros(estimate.minimumPerImageMicros)}。` : '';
-    if ((estimate.isMaximum || ns.shouldConfirmHighCost() || quickBatchNote) && !window.confirm(`${confirmLabel}。${quickBatchNote}\n确认生成吗？`)) return;
+    const confirmBatch = !ns.isOfficialModel() && settings.n > 1;
+    if (!ns.state.publicConfig?.features?.hybridImages && (estimate.isMaximum || ns.shouldConfirmHighCost() || confirmBatch)
+      && !window.confirm(`生成 ${settings.n} 张，${confirmLabel}。继续？`)) return;
 
     await ns.runGeneration(settings);
   };
@@ -489,7 +490,7 @@
       settings = { ...settings };
       if (ns.state.publicConfig?.features?.hybridImages) {
         const price = ns.estimatePrice(settings);
-        if (!price.ok || !window.confirm(`固定报价 ${ns.formatMicros(price.totalMicros)}，按所选规格收费。\n尺寸、质量、格式为尽力满足；参考图与成品默认永久保留。确认提交？`)) return;
+        if (!price.ok || !window.confirm(`生成 ${settings.n || 1} 张，${price.isMaximum ? '最高' : '费用'} ${ns.formatMicros(price.totalMicros)}。继续？`)) return;
         settings.bestEffortAccepted = true;
       }
       if ((ns.estimateRequestBodyBytes?.(settings) || 0) > ns.MAX_UPSTREAM_BODY_BYTES) throw new Error('请求超过 24MB，请减少参考图。');

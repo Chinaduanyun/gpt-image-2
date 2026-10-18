@@ -74,7 +74,7 @@ test('successful bootstrap enables generation after public config loads', async 
 });
 
 test('failed bootstrap keeps generation disabled', async () => {
-  const els = { runBtn: { disabled: false }, priceDetail: { textContent: '' } };
+  const els = { runBtn: { disabled: false }, priceTotal: { textContent: '' } };
   const busyStates = [];
   const ns = {
     state: {},
@@ -89,5 +89,5 @@ test('failed bootstrap keeps generation disabled', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(busyStates, []);
   assert.equal(els.runBtn.disabled, true);
-  assert.match(els.priceDetail.textContent, /加载失败/);
+  assert.equal(els.priceTotal.textContent, '--');
 });

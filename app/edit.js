@@ -447,7 +447,6 @@
       ns.els.editAppendToggle.checked, referenceCount);
     const check = ns.validateEditPrompt(composedPrompt);
     if (!check.ok) return ns.setEditStatus(check.error, 'error');
-    if (!ns.state.edit.strokes.length && !window.confirm('当前还没有任何标注，确认仅凭提示词修改整张图吗？')) return;
 
     const size = ns.resolveEditAspectRatio();
     const resolution = ns.getEditResolution();
@@ -468,8 +467,7 @@
       return ns.setEditStatus('请求体超过 24MB 上限，请减少参考图或先压缩图片。', 'error');
     }
     const costLabel = estimate.isMaximum ? `最高预扣 ${ns.formatMicros(estimate.unitMicros)}` : `预计 ${ns.formatMicros(estimate.unitMicros)}`;
-    const referenceNote = referenceCount ? `，附带 ${referenceCount} 张参考图` : '';
-    if (!window.confirm(`将按标注生成 1 张修改图（${size} · ${resolution}）${referenceNote}，${costLabel}。确认提交吗？`)) {
+    if (!ns.state.publicConfig?.features?.hybridImages && !window.confirm(`修改 1 张（${size} · ${resolution}），${costLabel}。继续？`)) {
       ns.setEditStatus('已取消提交。');
       return;
     }

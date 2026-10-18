@@ -72,7 +72,7 @@
 
   ns.startApp = async () => {
     ns.els.runBtn.disabled = true;
-    ns.els.priceDetail.textContent = '正在加载服务端价格配置...';
+    ns.els.priceTotal.textContent = '--';
     try {
       await ns.loadPublicConfig();
       ns.initDefaults();
@@ -81,7 +81,7 @@
       await ns.restoreSession();
     } catch (error) {
       ns.setStatus(`初始化失败：${error?.message || error}`, 'error');
-      ns.els.priceDetail.textContent = '价格配置加载失败，请刷新页面重试。';
+      ns.els.priceTotal.textContent = '--';
     }
   };
 
