@@ -34,6 +34,15 @@ const { chromium } = require('playwright');
     assert.equal(await page.locator('#taskCapsule').isVisible(), false, 'task capsule is hidden before account restoration');
     await page.locator('#emailInput').fill('test@staging.invalid'); await page.locator('#loginBtn').click(); await page.locator('#appShell').waitFor({ state: 'visible' });
     await page.waitForFunction(() => !document.querySelector('#runBtn').disabled);
+    // Header removal must not leave a phantom grid row that pushes submit off-screen.
+    for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 800 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      assert.equal(await page.locator('#runBtn').evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }), true);
+      await page.locator('#model').selectOption('gpt-image-2-official');
+      assert.equal(await page.locator('#model').inputValue(), 'gpt-image-2-official');
+      await page.locator('#model').selectOption('gpt-image-2');
+    }
+    await page.setViewportSize({ width: 1280, height: 950 });
     await page.locator('#prompt').fill('first overlapping request');
     await page.locator('#runBtn').dblclick();
     await page.waitForFunction(() => !ImageGen.state.isBusy && ImageGen.state.result?.taskId);

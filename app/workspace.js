@@ -233,7 +233,8 @@
     oldUpdate();
     const locked = ns.state.isBusy || Boolean(selected) || Boolean(hydrating);
     ns.els.runBtn.disabled = locked || activeCount >= limit || !restored;
-    ns.els.runBtn.textContent = selected ? '任务详情（只读）' : activeCount >= limit ? `进行中请求已达上限 ${limit}` : ns.state.isBusy ? '提交中…' : '生成图片';
+    ns.els.runBtn.textContent = selected ? '查看中 · 请新建下一次' : activeCount >= limit ? `进行中请求已达上限 ${limit}` : ns.state.isBusy ? '提交中…' : '生成图片';
+    ns.els.model.title = selected ? '已提交任务的模式不可修改，点击“新建下一次”继续生成。' : '';
     ns.els.prompt.readOnly = Boolean(selected);
     for (const field of fields) ns.els[field].disabled = locked;
     ns.els.referenceUploadBtn.disabled = locked; ns.els.referenceFileInput.disabled = locked;

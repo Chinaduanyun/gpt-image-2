@@ -444,7 +444,7 @@
   top: calc(var(--preview-topbar-height) + 22px);
   max-height: calc(100dvh - var(--preview-topbar-height) - 44px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
@@ -2159,9 +2159,14 @@
     padding: 17px 16px;
   }
 
+  .preview-composer {
+    max-height: calc(100dvh - var(--preview-topbar-height) - 20px);
+  }
+
   .preview-composer-scroll {
     gap: 18px;
     padding: 17px 16px 22px;
+    overflow-y: auto;
   }
 
   .preview-prompt-field textarea {
