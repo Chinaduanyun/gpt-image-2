@@ -228,6 +228,7 @@
     if (meaningful) ns.state.edit.strokes.push(stroke);
     ns.redrawEditAnnotations();
     ns.updateEditControls();
+    ns.saveWorkspaceDraft?.();
   };
 
   ns.bindEditCanvasEvents = () => {
@@ -245,12 +246,14 @@
     ns.state.edit.strokes.pop();
     ns.redrawEditAnnotations();
     ns.updateEditControls();
+    ns.saveWorkspaceDraft?.();
   };
   ns.clearEditStrokes = () => {
     if (!ns.state.edit?.strokes?.length) return;
     ns.state.edit.strokes = [];
     ns.redrawEditAnnotations();
     ns.updateEditControls();
+    ns.saveWorkspaceDraft?.();
   };
 
   // ---- 合成到离屏 canvas 并导出 dataURL（按目标尺寸重放原图 + 笔画）----

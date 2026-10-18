@@ -182,7 +182,7 @@ test('production page preserves selectable values, progress steps and asset orde
   assert.deepEqual(scripts, [
     './config.example.js', './app/state.js', './app/dom.js', './app/utils.js', './app/zip.js', './app/pricing.js',
     './app/auth.js', './app/references.js', './app/generation.js', './app/results.js', './app/history.js',
-    './app/admin.js', './app/edit.js', './app/edit-references.js', './app/edit-canvas.js', './app/main.js', './workspace-shell.js'
+    './app/admin.js', './app/edit.js', './app/edit-references.js', './app/edit-canvas.js', './app/workspace.js', './app/main.js', './workspace-shell.js'
   ]);
 });
 

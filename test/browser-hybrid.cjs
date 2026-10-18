@@ -32,6 +32,7 @@ const { chromium } = require('playwright');
     page.on('dialog', (dialog) => { dialogs.push(dialog.message()); dialog.accept(); });
     await page.goto(base);
     await page.locator('#emailInput').fill('test@staging.invalid'); await page.locator('#loginBtn').click(); await page.locator('#appShell').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !document.querySelector('#runBtn').disabled);
     await page.evaluate(() => { ImageGen.polling.initialDelayMs = 10; ImageGen.polling.intervalMs = 20; ImageGen.els.prompt.value = 'A small green tree'; });
     await page.locator('#runBtn').click();
     await page.waitForFunction(() => ImageGen.state.result?.status === 'completed' && !ImageGen.state.isBusy);

@@ -1,4 +1,5 @@
 const { sendJson } = require('../lib/http-utils');
+const { taskWorkspace } = require('../lib/task-workspace');
 const { loadApiMarketConfig } = require('../lib/api-market-config');
 const { loadDataStore, withDataStoreMutation } = require('../lib/store');
 const { requireSession, sendAuthError, publicUser, setSessionCookie } = require('../lib/auth');
@@ -63,6 +64,12 @@ async function handleMe(req, res, pathname, url) {
   if (pathname === '/api/me' && req.method === 'GET') {
     setSessionCookie(res, auth.token, req);
     sendJson(res, 200, { user: publicUser(auth.user) });
+    return;
+  }
+
+  if (pathname === '/api/me/tasks' && req.method === 'GET') {
+    await withDataStoreMutation((latestData) => markStaleSubmittingUnknown(latestData));
+    sendJson(res, 200, taskWorkspace(loadDataStore(), auth.email));
     return;
   }
 

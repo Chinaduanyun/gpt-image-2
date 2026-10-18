@@ -24,6 +24,7 @@ const STATIC_ALLOWLIST = new Set([
   '/app/edit.js',
   '/app/edit-references.js',
   '/app/edit-canvas.js',
+  '/app/workspace.js',
   '/app/main.js'
 ]);
 

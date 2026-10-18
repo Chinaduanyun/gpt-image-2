@@ -5,6 +5,7 @@ const { nowIso, createId, decodePathPart, canonicalPayloadHash, getIdempotencyKe
 const { send, sendJson, readRequestBody, safeParseJson, isResponseWritable } = require('../lib/http-utils');
 const { loadApiMarketConfig } = require('../lib/api-market-config');
 const { loadDataStore, withDataStoreMutation } = require('../lib/store');
+const { activeRequestLimit } = require('../lib/task-workspace');
 const { requireSession, sendAuthError } = require('../lib/auth');
 const { sanitizeGenerationPayload, estimateGenerationCostMicros, formatMoneyMicros, pricingConfig } = require('../lib/pricing');
 const {
@@ -559,6 +560,8 @@ async function handleGeneration(req, res, config) {
   const precharge = await withDataStoreMutation((latestData) => {
     const existing = existingRequestResult(existingGenerationsByClientRequest(latestData, auth.email, clientRequestId), requestHash);
     if (existing) return existing;
+    const capacity = activeRequestLimit(latestData, auth.email);
+    if (capacity) return { activeLimit: capacity };
 
     const user = latestData.users[auth.email];
     const balanceBefore = Number(user?.balanceMicros) || 0;
@@ -596,6 +599,10 @@ async function handleGeneration(req, res, config) {
     return { ok: true, log };
   });
 
+  if (precharge.activeLimit) {
+    sendJson(res, 409, { error: { code: 'active_request_limit', message: '进行中的请求已达上限。', ...precharge.activeLimit } });
+    return;
+  }
   if (precharge.conflict) {
     sendJson(res, 409, { error: { code: 'idempotency_conflict', message: 'Idempotency-Key 已用于不同的请求参数。' } });
     return;

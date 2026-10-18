@@ -450,127 +450,6 @@
   };
   ns.shouldConfirmHighCost = () => ns.isOfficialModel() && (ns.els.quality.value === 'high' || ns.els.resolution.value === '4k' || ns.getImageCount() > 1);
 
-  async function finishPolling(pollResult, pending, submitDebug, operationToken) {
-    if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    if (!pollResult.ok && ['cancelled', 'account_changed'].includes(pollResult.code)) return;
-    await ns.loadMe();
-    if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    await ns.loadMyLogs();
-    if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    if (ns.state.session?.user?.isAdmin) await ns.loadAdminData();
-    if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    if (!pollResult.ok) {
-      if (pollResult.code === 'client_wait_timeout') {
-        ns.stopProgress();
-        ns.els.progressPanel.className = 'progress-panel';
-        ns.els.progressHint.textContent = '客户端等待超时，任务仍在后台处理。刷新只查询当前任务，不会再次付费提交。';
-        ns.els.progressElapsed.textContent = '后台处理中';
-        ns.setStatus('等待超时。请使用“刷新当前任务”或稍后在作品库查看，系统已锁定重复提交。', 'loading');
-        ns.showDebug(pollResult.debug || submitDebug);
-        return;
-      }
-      ns.failProgress();
-      ns.setStatus(`状态查询失败：${pollResult.error}`, 'error');
-      ns.showDebug(pollResult.debug || submitDebug);
-      return;
-    }
-    const result = pollResult.result;
-    persistAndRender(result, true);
-    if (UNKNOWN_STATUSES.has(result.status)) {
-      ns.stopProgress();
-      ns.els.progressPanel.className = 'progress-panel error';
-      ns.els.progressHint.textContent = '任务状态未知，需要继续刷新或人工确认；不会自动重发或退款。';
-      ns.setStatus('任务需要关注：状态未知的请求不会自动重发，请联系管理员核查。', 'error');
-      ns.notifyGenerationComplete(result, `批次需要关注：${result.counts?.unknown || 0} 张子任务状态未知。`);
-      return;
-    }
-    await ns.clearPendingRequestSafely(pending.ownerEmail);
-    if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    if (result.kind === 'batch') {
-      const { succeeded = 0, failed = 0, unknown = 0 } = result.counts || {};
-      if (SUCCESS_STATUSES.has(result.status)) {
-        ns.completeProgress('批次全部完成。');
-        ns.setStatus(`批次完成：${succeeded}/${result.requestedCount} 张成功。`, 'ok');
-      } else if (result.status === 'partial_success' || result.status === 'partial') {
-        ns.completeProgress('批次部分完成，成功图片已保留。');
-        ns.setStatus(`批次部分完成：${succeeded}/${result.requestedCount} 张成功，${failed} 张失败，${unknown} 张状态未知。`, 'ok');
-      } else {
-        ns.failProgress('批次未生成成功图片。');
-        ns.setStatus(`批次失败：${failed}/${result.requestedCount} 张失败。`, 'error');
-      }
-    } else if (SUCCESS_STATUSES.has(result.status) && result.imageUrls.length) {
-      ns.completeProgress();
-      const actual = ns.extractActualCostMicros({ billing: result.billing });
-      ns.setStatus(`图片生成完成，共 ${result.imageUrls.length} 张。${actual === null ? '' : `实际费用 ${ns.formatMicros(actual)}。`}`, 'ok');
-    } else {
-      ns.failProgress();
-      ns.setStatus('生成失败，请查看错误信息或作品库记录。', 'error');
-    }
-    const counts = result.counts || {};
-    const notifyBody = result.kind === 'batch'
-      ? `批次结束：${counts.succeeded || 0}/${result.requestedCount} 张成功${counts.failed ? `，${counts.failed} 失败` : ''}${counts.unknown ? `，${counts.unknown} 未知` : ''}。`
-      : (SUCCESS_STATUSES.has(result.status) && result.imageUrls.length ? `已生成 ${result.imageUrls.length} 张图片。` : '生成失败，请查看错误信息。');
-    ns.notifyGenerationComplete(result, notifyBody);
-  }
-
-  async function pollPending(pending, operationToken, initialDelayMs = 0) {
-    const context = { prompt: pending.settings.prompt, settings: pending.settings, requestedCount: pending.requestedCount, ownerEmail: pending.ownerEmail, operationToken };
-    if (pending.kind === 'batch' && pending.batchId) return ns.pollBatch(pending.batchId, context, initialDelayMs);
-    if (pending.taskId) return ns.pollTask(pending.taskId, context);
-    return { ok: false, error: '当前请求尚未返回任务编号，将使用原幂等键恢复提交状态。' };
-  }
-
-  ns.recoverPendingGeneration = async ({ automatic = false } = {}) => {
-    let pending = ns.state.pendingRequest;
-    if (!pending) pending = await ns.restorePendingRequest();
-    if (!pending || ns.state.isBusy) return;
-    const currentEmail = ns.state.session?.user?.email || '';
-    if (pending.ownerEmail && pending.ownerEmail !== currentEmail) return;
-    pending.ownerEmail = currentEmail;
-    if (!pending.batchId && !pending.taskId && UNKNOWN_STATUSES.has(String(pending.status || '').toLowerCase())) {
-      ns.setStatus('上游提交状态未知且没有可查询的任务编号。系统不会自动重发；请在作品库中刷新或联系管理员核对。', 'error');
-      return;
-    }
-    const operationToken = ns.createIdempotencyKey();
-    ns.state.activeOperationToken = operationToken;
-    const submitController = new AbortController();
-    ns.state.submitController = submitController;
-    ns.setBusy(true);
-    if (!automatic) ns.startProgress(pending.requestedCount, ns.isBatchSubmission(pending.settings, pending.kind));
-    ns.setStatus('正在使用原请求标识刷新状态，不会创建新的付费任务...', 'loading');
-    try {
-      let pollResult;
-      if (pending.batchId || pending.taskId) {
-        pollResult = await pollPending(pending, operationToken, 0);
-      } else {
-        const replay = await ns.submitGeneration(pending.settings, pending.idempotencyKey, submitController.signal);
-        if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-        if (!replay.ok) {
-          if (replay.status === 409) throw new Error('幂等键与请求参数冲突，已停止提交。');
-          throw new Error(ns.getErrorMessage(replay, `恢复请求失败：HTTP ${replay.status}`));
-        }
-        const json = replay.json || {};
-        pending.kind = json.kind === 'batch' || ns.extractBatchId(json) ? 'batch' : 'task';
-        pending.batchId = ns.extractBatchId(json);
-        pending.taskId = ns.extractTaskId(json);
-        pending.status = ns.getTaskStatus(json);
-        await ns.savePendingRequest(pending, pending.ownerEmail);
-        if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-        pollResult = await pollPending(pending, operationToken, 0);
-      }
-      await finishPolling(pollResult, pending, { stage: 'recover', idempotencyKey: pending.idempotencyKey }, operationToken);
-    } catch (error) {
-      if (ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) ns.setStatus(`恢复任务失败：${error?.message || error}。原请求仍已锁定，可稍后再次刷新。`, 'error');
-    } finally {
-      if (ns.state.activeOperationToken === operationToken) {
-        ns.state.activeOperationToken = '';
-        ns.state.submitController = null;
-        ns.stopProgress();
-        ns.setBusy(false);
-      }
-    }
-  };
-
   ns.handleRun = async () => {
     if (ns.hasPendingGeneration()) return ns.recoverPendingGeneration();
     ns.resetGenerationSteps();
@@ -594,139 +473,56 @@
     await ns.runGeneration(settings);
   };
 
-  // 公共提交/轮询/结果链路：接收已构建好的 settings，负责幂等键、恢复记录落盘、提交、轮询与
-  // 结果落地。主生成（handleRun）与标注编辑提交（handleEditSubmit）共用此路径与同一 busy 锁。
-  // 调用方需先完成表单校验、价格估算与用户确认。
+  // Single paid submission path shared by composer and annotation editor.
   ns.runGeneration = async (settings) => {
-    if (ns.state.publicConfig?.features?.hybridImages) {
-      const price = ns.estimatePrice(settings);
-      if (!price.ok || !window.confirm(`固定报价 ${ns.formatMicros(price.totalMicros)}，按所选规格收费。\n尺寸、质量、格式为尽力满足，并非保证原生高清；成品展示实际尺寸与格式。参考图与成品默认永久保留。${ns.state.publicConfig?.features?.marketFallbackEnabled ? '明确技术失败可回退备用通道一次。' : '真实 Market 备用通道当前未配置。'}\n同意并提交吗？`)) return;
-    }
-    // 后端请求体上限 24MB（上游 api.apib.ai 实测 32MB 放行，已非瓶颈）：提交前先估算并拦截，
-    // 替代神秘的 413。主要来源是 image_urls 里的 base64 参考图/合成图。
-    if (ns.state.publicConfig?.features?.hybridImages) settings = { ...settings, bestEffortAccepted: true };
-    const bodyBytes = ns.estimateRequestBodyBytes?.(settings) || 0;
-    if (bodyBytes > ns.MAX_UPSTREAM_BODY_BYTES) {
-      ns.setStatus(`请求体约 ${(bodyBytes / 1024 / 1024).toFixed(2)}MB，超过 24MB 上限；请减少参考图数量或先压缩图片后重试。`, 'error');
-      return;
-    }
-    let operationToken = '';
-    const idempotencyKey = ns.createIdempotencyKey();
-    const ownerEmail = ns.state.session?.user?.email || '';
-    const accountEpoch = ns.state.accountEpoch;
-    const sessionToken = ns.state.session?.token;
-    if (accountEpoch !== ns.state.accountEpoch || sessionToken !== ns.state.session?.token || ownerEmail !== ns.state.session?.user?.email) return;
-    const pending = { idempotencyKey, settings, requestedCount: settings.n, kind: '', batchId: '', taskId: '', ownerEmail, createdAt: new Date().toISOString() };
-    operationToken = ns.createIdempotencyKey();
-    ns.state.activeOperationToken = operationToken;
-    const submitController = new AbortController();
-    ns.state.submitController = submitController;
-    try {
-      await ns.savePendingRequest(pending, pending.ownerEmail);
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-    } catch (error) {
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      ns.state.pendingRequest = null;
-      ns.state.activeOperationToken = '';
-      ns.state.submitController = null;
-      ns.updatePendingUi();
-      ns.setGenerationStep('validate', 'error');
-      ns.setStatus(`无法建立安全的请求恢复记录，未提交也未扣费：${error?.message || error}`, 'error');
-      return;
-    }
-    ns.resetResult(false);
+    if (ns.state.isBusy || (ns.workspaceSubmit && !ns.workspaceSubmit.ready())) return;
     ns.setBusy(true);
-    ns.setStatus('正在提交生成任务...', 'loading');
-    ns.startProgress(settings.n, ns.isBatchSubmission(settings));
-    const placeholder = ns.isBatchSubmission(settings)
-      ? ns.normalizeBatchResult({}, { prompt: settings.prompt, settings, requestedCount: settings.n })
-      : ns.normalizeTaskResult({}, { prompt: settings.prompt, settings, status: 'submitting' });
-    persistAndRender(placeholder);
-
-    let submitDebug = null;
+    const ownerEmail = ns.state.session?.user?.email;
+    const epoch = ns.state.accountEpoch;
+    const token = ns.state.session?.token;
+    const current = () => epoch === ns.state.accountEpoch && token === ns.state.session?.token && ownerEmail === ns.state.session?.user?.email;
+    const id = ns.createIdempotencyKey();
+    let sent = false;
+    const save = (task) => ns.workspaceSubmit ? ns.workspaceSubmit.save(task) : ns.savePendingRequest(task, ownerEmail);
+    const remove = () => ns.workspaceSubmit ? ns.workspaceSubmit.remove(id) : ns.savePendingRequest(null, ownerEmail);
     try {
-      ns.setGenerationStep('submit');
-      const submitResult = await ns.submitGeneration(settings, idempotencyKey, submitController.signal);
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      submitDebug = { stage: 'submit', status: submitResult.status, request: { ...settings, image_urls: settings.image_urls ? `[${settings.image_urls.length} 张参考图]` : undefined }, response: submitResult.json || submitResult.text, idempotencyKey };
-      if (!submitResult.ok) {
-        if (submitResult.status === 409) {
-          await ns.clearPendingRequestSafely(pending.ownerEmail);
-          if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-          ns.failProgress();
-          ns.setStatus('提交失败：请求标识与参数冲突，请刷新页面后重试。', 'error');
-          return;
-        }
-        if (ns.isAmbiguousSubmissionStatus(submitResult.status)) {
-          ns.stopProgress();
-          ns.els.progressPanel.className = 'progress-panel error';
-          ns.els.progressHint.textContent = '服务端响应不确定，原请求标识已保留。刷新只会恢复当前请求，不会创建新的付费任务。';
-          ns.setStatus(`提交响应不确定（HTTP ${submitResult.status}）。请使用“刷新当前任务”，不要重新生成。`, 'error');
-          ns.showDebug(submitDebug);
-          await ns.loadMe();
-          if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-          await ns.loadMyLogs();
-          if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-          return;
-        }
-        await ns.clearPendingRequestSafely(pending.ownerEmail);
-        if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-        ns.failProgress();
-        ns.setStatus(`提交失败：${ns.getErrorMessage(submitResult, `HTTP ${submitResult.status}`)}`, 'error');
-        ns.showDebug(submitDebug);
-        await ns.loadMe();
-        if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-        await ns.loadMyLogs();
-        if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-        return;
+      settings = { ...settings };
+      if (ns.state.publicConfig?.features?.hybridImages) {
+        const price = ns.estimatePrice(settings);
+        if (!price.ok || !window.confirm(`固定报价 ${ns.formatMicros(price.totalMicros)}，按所选规格收费。\n尺寸、质量、格式为尽力满足；参考图与成品默认永久保留。确认提交？`)) return;
+        settings.bestEffortAccepted = true;
       }
-      const json = submitResult.json || {};
-      pending.kind = json.kind === 'batch' || ns.extractBatchId(json) ? 'batch' : 'task';
-      pending.batchId = ns.extractBatchId(json);
-      pending.taskId = ns.extractTaskId(json);
-      pending.status = ns.getTaskStatus(json);
-      await ns.savePendingRequest(pending, pending.ownerEmail);
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      await ns.loadMe();
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      await ns.loadMyLogs();
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      if (ns.state.session?.user?.isAdmin) await ns.loadAdminData();
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-
-      if (pending.kind === 'batch') {
-        const initial = ns.normalizeBatchResult(json, { prompt: settings.prompt, settings, requestedCount: settings.n, batchId: pending.batchId, debug: { submit: submitDebug } });
-        persistAndRender(initial);
-        if (!pending.batchId) throw new Error('批次响应缺少 batch_id；原请求已保留，请勿重新生成。');
-      } else {
-        const initial = ns.normalizeTaskResult(json, { prompt: settings.prompt, settings, taskId: pending.taskId, status: pending.status || 'processing', debug: { submit: submitDebug } });
-        persistAndRender(initial);
-        if (!pending.taskId) {
-          const message = UNKNOWN_STATUSES.has(pending.status)
-            ? '上游提交状态未知且没有 task_id；原请求已锁定，不会自动重发，请在作品库刷新或联系管理员核对。'
-            : '任务响应缺少 task_id；原请求已保留，请勿重新生成。';
-          throw new Error(message);
-        }
+      if ((ns.estimateRequestBodyBytes?.(settings) || 0) > ns.MAX_UPSTREAM_BODY_BYTES) throw new Error('请求超过 24MB，请减少参考图。');
+      ns.workspaceSubmit?.capture();
+      const task = { id, clientRequestId: id, idempotencyKey: id, ownerEmail, settings, prompt: settings.prompt, status: 'submission_unknown', active: true, requestedCount: settings.n, imageUrls: [], createdAt: new Date().toISOString() };
+      await save(task);
+      if (!current()) return;
+      sent = true;
+      const response = await ns.submitGeneration(settings, id);
+      if (!current()) return;
+      if (!response.ok) {
+        if (!ns.isAmbiguousSubmissionStatus(response.status)) await remove();
+        if (response.json?.error?.code === 'active_request_limit') ns.workspaceSubmit?.capacity(response.json.error);
+        throw new Error(ns.getErrorMessage(response, '提交失败；不确定的请求保留原标识，不会自动重发。'));
       }
-      ns.setGenerationStep('queued');
-      ns.setGenerationStep('poll');
-      ns.setStatus(`${pending.kind === 'batch' ? `批次 ${pending.batchId}` : `任务 ${pending.taskId}`} 已提交，正在查询结果...`, 'loading');
-      const pollResult = await pollPending(pending, operationToken);
-      await finishPolling(pollResult, pending, submitDebug, operationToken);
-    } catch (error) {
-      if (!ns.isGenerationOperationCurrent(operationToken, pending.ownerEmail)) return;
-      ns.stopProgress();
-      ns.els.progressPanel.className = 'progress-panel error';
-      const message = error instanceof TypeError ? '网络请求中断。原请求已锁定，请使用“刷新当前任务”，不要重复付费提交。' : `${error?.message || error}`;
-      ns.setStatus(message, 'error');
-      if (submitDebug) ns.showDebug(submitDebug);
-    } finally {
-      if (ns.state.activeOperationToken === operationToken) {
-        ns.state.activeOperationToken = '';
-        ns.state.submitController = null;
-        ns.stopProgress();
-        ns.setBusy(false);
+      task.taskId = ns.extractTaskId(response.json); task.batchId = ns.extractBatchId(response.json);
+      task.kind = task.batchId ? 'batch' : 'task'; task.status = ns.getTaskStatus(response.json) || 'processing';
+      await save(task);
+      if (!current()) return;
+      await ns.workspaceSubmit?.accepted(task);
+      ns.setStatus('请求已接受，可使用“+ 新建下一次”继续创作。', 'ok');
+      void ns.loadMe();
+    } catch (e) {
+      if (current()) {
+        if (!sent) await remove().catch(() => {});
+        if (sent) await ns.workspaceSubmit?.unknown(id);
+        ns.setStatus(`请求未完成：${e.message || e}。原标识会保留，不会自动重发。`, 'error');
       }
-    }
+    } finally { if (current()) ns.setBusy(false); }
+  };
+  ns.recoverPendingGeneration = async () => {
+    // Workspace replaces this with feed-only reconciliation; never replay an ambiguous POST.
+    if (ns.state.pendingRequest?.ownerEmail !== ns.state.session?.user?.email) return;
+    ns.setStatus('原请求已保留，请通过任务列表核查；不会自动重发。', 'loading');
   };
 })();

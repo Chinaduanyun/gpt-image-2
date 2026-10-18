@@ -26,6 +26,7 @@
   ns.referenceFileToDataUrl = fileToDataUrl;
 
   ns.addReferenceImage = (item) => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     if (remainingSlots() <= 0) return false;
     ns.state.referenceImages.push({ id: makeId(), type: item.type, value: item.value, name: item.name || '', bytes: item.bytes || 0 });
     return true;
@@ -42,6 +43,7 @@
   }
 
   ns.addReferenceFromUrl = async (url, name = '参考图', accountContext = captureAccountContext()) => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     if (!isAccountContextCurrent(accountContext)) return false;
     if (remainingSlots() <= 0) {
       ns.setReferenceStatus('参考图数量已达上限。', 'error');
@@ -100,8 +102,8 @@
   ns.renderReferences = () => {
     const count = ns.state.referenceImages.length;
     ns.els.referenceCount.textContent = `${count}/${ns.constants.MAX_REFERENCE_IMAGES} 张`;
-    ns.els.referenceUploadBtn.disabled = ns.state.isBusy;
-    ns.els.clearReferencesBtn.disabled = count === 0 || ns.state.isBusy;
+    ns.els.referenceUploadBtn.disabled = ns.state.isBusy || ns.isWorkspaceReadOnly?.();
+    ns.els.clearReferencesBtn.disabled = count === 0 || ns.state.isBusy || ns.isWorkspaceReadOnly?.();
     ns.els.referencePreviewGrid.classList.toggle('hidden', count === 0);
     ns.els.referencePreviewGrid.replaceChildren(...ns.state.referenceImages.map((item, index) => {
       const figure = document.createElement('figure');
@@ -116,7 +118,7 @@
       removeBtn.type = 'button';
       removeBtn.dataset.referenceId = item.id;
       removeBtn.textContent = '删除';
-      removeBtn.disabled = ns.state.isBusy;
+      removeBtn.disabled = ns.state.isBusy || ns.isWorkspaceReadOnly?.();
       figure.append(img, caption, removeBtn);
       return figure;
     }));
@@ -126,6 +128,7 @@
   // 校验+入库一批 File（本地选择或剪贴板粘贴共用），逐张套用格式/单张5MB/合计18MB/张数上限。
   // 返回 { added, rejected, aborted }；aborted=true 表示中途账号切换，调用方应放弃后续渲染。
   ns.addReferenceFileList = async (fileList) => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     const accountContext = captureAccountContext();
     const files = Array.from(fileList || []);
     let added = 0;
@@ -222,12 +225,14 @@
   };
 
   ns.removeReference = (id) => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     ns.state.referenceImages = ns.state.referenceImages.filter((item) => item.id !== id);
     ns.renderReferences();
     ns.setReferenceStatus('已删除参考图。', 'ok');
   };
 
   ns.clearReferences = () => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     ns.state.referenceImages = [];
     if (ns.els.referenceFileInput) ns.els.referenceFileInput.value = '';
     ns.renderReferences();

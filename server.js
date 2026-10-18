@@ -38,7 +38,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === '/api/me' || url.pathname === '/api/me/logs' || url.pathname.startsWith('/api/me/logs/')) {
+  if (url.pathname === '/api/me' || url.pathname === '/api/me/tasks' || url.pathname === '/api/me/logs' || url.pathname.startsWith('/api/me/logs/')) {
     handleMe(req, res, url.pathname, url).catch((error) => {
       const message = error instanceof SyntaxError ? '请求 JSON 格式无效。' : error.message || '用户接口请求失败。';
       sendJson(res, error instanceof SyntaxError ? 400 : 500, { error: { message } });

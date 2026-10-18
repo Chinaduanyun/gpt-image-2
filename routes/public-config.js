@@ -1,5 +1,6 @@
 const { sendJson } = require('../lib/http-utils');
 const { QUICK_BATCH_ENABLED } = require('../lib/constants');
+const { maxActiveRequests } = require('../lib/task-workspace');
 const {
   SIMPLE_PRICE_MAP,
   SIZE_RESOLUTION_MAP,
@@ -34,6 +35,7 @@ function handlePublicConfig(req, res) {
       sizeResolutionMap: SIZE_RESOLUTION_MAP,
       officialPriceMap: OFFICIAL_PRICE_MAP
     },
+    limits: { maxActiveRequests: maxActiveRequests() },
     progress: progressConfig
   });
 }

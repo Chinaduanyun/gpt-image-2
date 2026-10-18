@@ -24,6 +24,7 @@
   }
 
   ns.applyResultToForm = (result) => {
+    if (ns.isWorkspaceReadOnly?.()) return false;
     if (!result) return false;
     applySettingsToForm({ ...(result.settings || {}), prompt: result.prompt || '' });
     ns.setStatus('已复用提示词和参数，可继续调整或重新生成。', 'ok');
@@ -196,7 +197,7 @@
   function focusResultIfNeeded(result, options) {
     const successful = result.imageUrls?.length || 0;
     const focusId = `${result.batchId || result.taskId || 'pending'}:${successful}:${result.status}`;
-    const shouldFocus = options.focus || (successful > 0 && ns.state.lastResultFocusId !== focusId && window.matchMedia('(max-width: 980px)').matches);
+    const shouldFocus = options.focus !== false && (options.focus || (successful > 0 && ns.state.lastResultFocusId !== focusId && window.matchMedia('(max-width: 980px)').matches));
     if (!shouldFocus) return;
     ns.state.lastResultFocusId = focusId;
     window.requestAnimationFrame(() => {
@@ -301,6 +302,7 @@
     if (!target) return;
     if (target.dataset.copyUrl) return ns.copyImageLink(target.dataset.copyUrl);
     if (target.dataset.referenceUrl) return ns.addReferenceUrls([target.dataset.referenceUrl], '生成结果');
+    if (target.dataset.editUrl && ns.isWorkspaceReadOnly?.()) return ns.setStatus('请先返回草稿，再打开标注编辑。', 'error');
     if (target.dataset.editUrl) return ns.startEditFromUrl(target.dataset.editUrl, 'stored');
     if (target.dataset.refreshCurrent) return ns.recoverPendingGeneration();
     if (target.dataset.retryImage) {
