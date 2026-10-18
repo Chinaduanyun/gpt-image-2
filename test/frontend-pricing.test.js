@@ -153,6 +153,7 @@ function createRerunHarness(script, estimate) {
     formatDate() { return date; },
     setStatus(message, type) { statuses.push({ message, type }); },
     hasPendingGeneration() { return false; },
+    isAccountContextCurrent() { return true; },
     async handleRun() { runCount += 1; }
   };
   const context = vm.createContext({
@@ -264,3 +265,32 @@ test('history renders admin-refunded closed submissions as a terminal refunded f
   assert.match(ns.els.myLogsList.innerHTML, /隐藏作品/);
 });
 
+
+
+test('delayed history regeneration runs only while its applied draft revision remains current', async () => {
+  const event = { target: { closest: () => ({ dataset: { logId: 'log-1', historyAction: 'regenerate' } }) } };
+  for (const changed of [false, true]) {
+    const { ns, getRunCount } = createRerunHarness('app/history.js', { ok: true, totalMicros: 1200000 });
+    let revision = 0, finish;
+    ns.getWorkspaceDraftRevision = () => revision;
+    ns.saveWorkspaceDraft = () => { revision++; return new Promise(resolve => { finish = resolve; }); };
+    const pending = ns.handleHistoryClick(event);
+    if (changed) { revision++; ns.els.prompt.value = 'superseding draft'; }
+    finish(); await pending;
+    assert.equal(getRunCount(), changed ? 0 : 1);
+    assert.equal(ns.els.prompt.value, changed ? 'superseding draft' : 'test');
+  }
+});
+
+test('history reuse and regeneration handle rejected saves without losing the applied form', async () => {
+  for (const action of ['reuse', 'regenerate']) {
+    const { ns, getRunCount } = createRerunHarness('app/history.js', { ok: true, totalMicros: 1200000 });
+    ns.saveWorkspaceDraft = () => Promise.reject(new Error('storage unavailable'));
+    const event = { target: { closest: () => ({ dataset: { logId: 'log-1', historyAction: action } }) } };
+    await assert.doesNotReject(() => ns.handleHistoryClick(event));
+    assert.equal(ns.els.prompt.value, 'test'); assert.equal(getRunCount(), 0);
+    ns.saveWorkspaceDraft = () => Promise.resolve();
+    await ns.handleHistoryClick(event);
+    assert.equal(getRunCount(), action === 'regenerate' ? 1 : 0);
+  }
+});

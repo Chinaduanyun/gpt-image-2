@@ -15,7 +15,13 @@ const { serveStatic } = require('./routes/static');
 
 const server = http.createServer((req, res) => {
   attachResponseErrorHandler(res);
-  const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
+  let url;
+  try {
+    url = new URL(req.url || '/', 'http://localhost');
+  } catch {
+    sendJson(res, 400, { error: { message: '请求地址无效。' } });
+    return;
+  }
 
   if (url.pathname === '/api/public-config') {
     handlePublicConfig(req, res);
@@ -66,6 +72,8 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res, url.pathname);
 });
 
+let backgroundRefreshTimer = null;
+
 async function startServer() {
   await initializeDataStore();
   await withDataStoreMutation((data) => markStaleSubmittingUnknown(data, Date.now(), 0, true));
@@ -75,7 +83,6 @@ async function startServer() {
   // off after listen instead, so a 180s upstream query can never block the site.
   const runner = require('./lib/image-task-runner');
   await runner.recoverTasks(true, { network: false });
-  let backgroundRefreshTimer = null;
   server.listen(PORT, HOST, () => {
     console.log(`Local server listening at http://${HOST}:${PORT}`);
     // Controlled asynchronous network recovery; deduplicated by the runner's active map

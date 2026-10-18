@@ -184,7 +184,7 @@
     }).join('');
   };
 
-  function applyHistoryLogToForm(log) {
+  async function applyHistoryLogToForm(log) {
     if (ns.isWorkspaceReadOnly?.()) { ns.setStatus('当前为只读任务详情，请先返回草稿再复用历史作品。', 'error'); return false; }
     if (!log || !['generation', 'batch', 'task'].includes(log.type || log.kind)) return false;
     const settings = log.settings || {};
@@ -200,7 +200,10 @@
     ns.updateModelUi();
     ns.setStatus('已复用作品的提示词和参数。', 'ok');
     ns.els.prompt.focus();
-    return true;
+    const saved = ns.saveWorkspaceDraft?.();
+    const revision = ns.getWorkspaceDraftRevision?.();
+    try { await saved; } catch { return false; } // The save API already reports its storage error.
+    return revision === ns.getWorkspaceDraftRevision?.();
   }
 
   ns.loadMyLogs = async () => {
@@ -218,9 +221,10 @@
       }
       ns.renderMyLogs(result.json?.logs || []);
     } catch (error) {
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       ns.els.myLogsList.innerHTML = `<div class="list-state is-error">作品库加载失败：${ns.escapeHtml(error?.message || error)}<button class="secondary compact" type="button" data-history-action="retry-load">重试</button></div>`;
     } finally {
-      ns.els.refreshMyLogsBtn.disabled = false;
+      if (ns.isAccountContextCurrent(epoch, token)) ns.els.refreshMyLogsBtn.disabled = false;
     }
   };
 
@@ -228,13 +232,19 @@
     if (!logId) return;
     const ok = window.confirm('确认隐藏这条作品吗？\n\n隐藏作品不会取消任务或退款；提交状态未知的独立作品也可隐藏，仍需管理员核查。管理员记录会保留用于审计和余额对账；参考图和成品不会因隐藏而删除。');
     if (!ok) return;
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
     const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}`, { method: 'DELETE' });
+    if (!ns.isAccountContextCurrent(epoch, token)) return;
     if (!result.ok) return ns.setStatus(ns.getErrorMessage(result, '隐藏作品失败。执行中、批次未知或其他未结算任务不能隐藏；独立的提交状态未知作品除外。'), 'error');
     ns.setStatus('作品已从个人作品库隐藏，账本记录仍保留。', 'ok');
     await ns.loadMyLogs();
   };
 
   let historySearchTimer = null;
+  ns.resetHistorySearch = () => {
+    if (historySearchTimer) window.clearTimeout(historySearchTimer);
+    historySearchTimer = null;
+  };
   ns.handleHistorySearch = () => {
     if (historySearchTimer) window.clearTimeout(historySearchTimer);
     // 输入防抖 ~250ms，避免每敲一个字就整列表重渲染。
@@ -257,12 +267,15 @@
     const log = ns.findHistoryLog(logId);
     if (action === 'delete-assets') {
       if (!window.confirm('永久删除此作品的参考图及成品？不可恢复，财务记录仍保留。')) return;
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
       const result = await ns.requestJson(`/api/me/logs/${encodeURIComponent(logId)}/assets`, { method: 'DELETE', headers: { 'X-Confirm-Delete': 'permanent' } });
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       if (!result.ok) return ns.setStatus('删除失败。', 'error');
       return ns.loadMyLogs();
     }
     if (action === 'delete') return ns.deleteHistoryLog(logId);
     if (!log) return;
+    ns.invalidateWorkspaceDraftOperation?.();
     if (action === 'reuse') return applyHistoryLogToForm(log);
     if (action === 'reference') return ns.addReferenceUrls(log.imageUrls || [], '历史作品');
     if (action === 'edit') {
@@ -274,7 +287,8 @@
     if (action === 'download-zip') return ns.downloadImagesAsZip(log.batchId || log.batch_id || log.taskId || log.task_id || log.id, log.imageUrls || []);
     if (action === 'regenerate') {
       if (ns.hasPendingGeneration()) return ns.setStatus('当前任务尚未安全结束，不能创建新的付费请求。请先刷新当前任务。', 'error');
-      if (!applyHistoryLogToForm(log)) return;
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
+      if (!await applyHistoryLogToForm(log) || !ns.isAccountContextCurrent(epoch, token)) return;
       const estimate = ns.estimatePrice();
       if (!estimate.ok) return ns.setStatus(`无法再次生成：${estimate.error || '价格配置异常。'}`, 'error');
       await ns.handleRun();

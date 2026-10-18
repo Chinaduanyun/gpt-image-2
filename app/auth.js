@@ -43,8 +43,8 @@
       await new Promise((resolve, reject) => {
         const transaction = database.transaction('pending', 'readwrite');
         const request = value ? transaction.objectStore('pending').put(value, key) : transaction.objectStore('pending').delete(key);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error || new Error('任务恢复状态保存失败。'));
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = transaction.onabort = () => reject(transaction.error || request.error || new Error('任务恢复状态保存失败。'));
       });
     } finally {
       database.close();
@@ -112,6 +112,11 @@
       window.localStorage.removeItem(key);
     }
   };
+  ns.consumeLegacyPendingRequest = async (email) => {
+    const key = ns.pendingStorageKey(email);
+    await writePendingDatabase(key, null);
+    window.localStorage.removeItem(key);
+  };
   ns.restorePendingRequest = async () => {
     const ownerEmail = ns.state.session?.user?.email || '';
     const key = ns.pendingStorageKey(ownerEmail);
@@ -121,23 +126,24 @@
     if (!key) return null;
     try {
       let pending = await readPendingDatabase(key);
+      let complete = true;
       if (!pending) {
         const fallback = JSON.parse(window.localStorage.getItem(key) || 'null');
-        if (fallback?.hasReferencePayload && !fallback?.batchId && !fallback?.taskId) return null;
         pending = fallback;
+        complete = !fallback?.hasReferencePayload;
       }
       if (!pending?.idempotencyKey || !pending?.settings || (pending.ownerEmail && pending.ownerEmail !== ownerEmail)) return null;
       if (epoch !== ns.state.accountEpoch || ownerEmail !== ns.state.session?.user?.email || key !== ns.pendingStorageKey(ownerEmail)) return null;
-      pending = { ...pending, ownerEmail };
+      pending = { ...pending, ownerEmail, legacySourceReadComplete: true, legacyRecoveryComplete: complete };
       ns.state.pendingRequest = pending;
       ns.updatePendingUi?.();
       return pending;
     } catch {
       try {
         const fallback = JSON.parse(window.localStorage.getItem(key) || 'null');
-        if (!fallback?.idempotencyKey || !fallback?.settings || (fallback.hasReferencePayload && !fallback.batchId && !fallback.taskId) || (fallback.ownerEmail && fallback.ownerEmail !== ownerEmail)) return null;
+        if (!fallback?.idempotencyKey || !fallback?.settings || (fallback.ownerEmail && fallback.ownerEmail !== ownerEmail)) return null;
         if (epoch !== ns.state.accountEpoch || ownerEmail !== ns.state.session?.user?.email || key !== ns.pendingStorageKey(ownerEmail)) return null;
-        const pending = { ...fallback, ownerEmail };
+        const pending = { ...fallback, ownerEmail, legacySourceReadComplete: false, legacyRecoveryComplete: !fallback.hasReferencePayload };
         ns.state.pendingRequest = pending;
         ns.updatePendingUi?.();
         return pending;
@@ -166,6 +172,7 @@
   };
   ns.resetAccountRuntime = () => {
     ns.state.accountEpoch += 1;
+    ns.invalidateReferenceReads?.();
     ns.resetNotifyDedup?.();
     ns.state.pollController?.abort();
     ns.state.submitController?.abort();
@@ -176,16 +183,33 @@
     ns.state.pendingRequest = null;
     ns.state.activeOperationToken = '';
     ns.state.result = null;
+    ns.state.lastLiveAnnouncement = '';
+    ns.state.lastResultFocusId = '';
     ns.state.myLogs = [];
+    ns.state.adminLogs = [];
+    ns.state.adminVisible = false;
+    ns.state.historySearch = '';
+    ns.state.historyFilter = 'all';
+    ns.resetHistorySearch?.();
+    for (const key of ['myLogsList', 'adminUsersBody', 'adminLogsBody', 'adminStatus', 'currentUserEmail', 'currentUserBalance', 'editSourceNote', 'editStatus', 'editEmptyStatus', 'referenceStatus', 'status', 'resultLive', 'progressHint']) ns.els?.[key]?.replaceChildren();
+    for (const key of ['historySearchInput', 'adminAddEmail', 'adminAddName']) if (ns.els?.[key]) ns.els[key].value = '';
+    if (ns.els?.historyFilterSelect) ns.els.historyFilterSelect.value = 'all';
+    if (ns.els?.adminAddBalance) ns.els.adminAddBalance.value = '0';
+    for (const [field, fallback] of Object.entries({ model: 'gpt-image-2', aspectRatio: 'auto', resolution: '1k', quality: 'low', imageCount: '1', outputFormat: 'png', outputCompression: '90' })) {
+      if (ns.els?.[field]) ns.els[field].value = String(ns.defaults?.[field] ?? fallback);
+    }
+    ns.resetResult?.();
+    ns.resetAccountEditor?.();
     ns.state.referenceImages = [];
     if (ns.els?.prompt) ns.els.prompt.value = '';
     if (ns.els?.referenceFileInput) ns.els.referenceFileInput.value = '';
     ns.updatePromptStats?.();
     ns.renderReferences?.();
-    // 切账号：清空标注编辑器状态并回到空态（话术按账号隔离，随下次 initEditPanel 回显）。
+    // Reset account-owned controls before the next account's preferences/workspace hydrate.
     ns.resetEditState?.();
     if (ns.els?.editUploadInput) ns.els.editUploadInput.value = '';
     ns.renderEditor?.();
+    for (const key of ['refreshMyLogsBtn', 'adminRefreshBtn']) if (ns.els?.[key]) ns.els[key].disabled = false;
     ns.updatePendingUi?.();
   };
   ns.renderAuthState = () => {
@@ -236,6 +260,7 @@
       ns.state.session = { token: result.json.token, user: result.json.user };
       ns.storeSession(result.json.token, result.json.user);
       ns.state.adminVisible = false;
+      ns.loadEditAnnotation?.();
       ns.renderAuthState();
       ns.setStatus('登录成功，可以开始生成图片。', 'ok');
       ns.restoreStoredResult();
@@ -292,6 +317,7 @@
     const epoch = ns.state.accountEpoch;
     const token = ns.state.session.token;
     const ownerEmail = ns.state.session.user.email;
+    ns.loadEditAnnotation?.();
     ns.restoreStoredResult();
     await ns.restorePendingRequest();
     if (!ns.isAccountContextCurrent(epoch, token, ownerEmail)) return;

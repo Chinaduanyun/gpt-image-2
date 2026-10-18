@@ -12,15 +12,23 @@ const { refreshLogsFromUpstream, markStaleSubmittingUnknown, closeSubmissionUnkn
 // integer; NaN / Infinity / floats / oversized values are rejected instead of being
 // silently swallowed by `|| 0`. Returns { ok, micros, provided }.
 function resolveLedgerMicros(body, microsKey, usdKey) {
+  let usdMicros;
+  if (body[usdKey] !== undefined) {
+    const value = body[usdKey];
+    if (typeof value !== 'number' && typeof value !== 'string') return { ok: false };
+    const normalized = String(value).trim().replace(/^[¥￥$]/, '');
+    // The compatibility parser returns zero for invalid input, so validate first.
+    if (!normalized.trim() || !Number.isFinite(Number(normalized))) return { ok: false };
+    usdMicros = parseMoneyToMicros(value);
+    if (!Number.isSafeInteger(usdMicros)) return { ok: false };
+  }
   if (body[microsKey] !== undefined) {
     const micros = Number(body[microsKey]);
     if (!Number.isSafeInteger(micros)) return { ok: false };
     return { ok: true, micros, provided: true };
   }
   if (body[usdKey] !== undefined) {
-    const micros = parseMoneyToMicros(body[usdKey]);
-    if (!Number.isSafeInteger(micros)) return { ok: false };
-    return { ok: true, micros, provided: true };
+    return { ok: true, micros: usdMicros, provided: true };
   }
   return { ok: true, micros: 0, provided: false };
 }
@@ -239,7 +247,9 @@ async function handleAdmin(req, res, pathname, url) {
       if (!target) return { notFound: true };
 
       const before = Number(target.balanceMicros) || 0;
-      target.balanceMicros = Math.max(0, before + deltaMicros);
+      const after = before + deltaMicros;
+      if (!Number.isSafeInteger(after)) return { invalidAmount: true };
+      target.balanceMicros = Math.max(0, after);
       // Recharges automatically settle the user's oldest outstanding underpayment debt.
       const collectedDebtMicros = deltaMicros > 0 ? collectUnderpaidDebt(latestData, email, nowIso()) : 0;
       target.updatedAt = nowIso();
@@ -263,6 +273,10 @@ async function handleAdmin(req, res, pathname, url) {
     }
     if (result.notFound) {
       sendJson(res, 404, { error: { message: '用户不存在。' } });
+      return;
+    }
+    if (result.invalidAmount) {
+      sendJson(res, 400, { error: { message: INVALID_AMOUNT_MESSAGE } });
       return;
     }
     sendJson(res, 200, { user: result.user });

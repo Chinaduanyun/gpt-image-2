@@ -1,36 +1,35 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const dns = require('node:dns').promises;
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 const { downloadExternalFile } = require('../lib/image-store');
 
-test('download rejects (does not hang) when the connection aborts mid-stream', async () => {
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': '100000' });
-    res.write(Buffer.from('partial-bytes'));
-    // Drop the connection before finishing the declared body.
-    setImmediate(() => res.socket.destroy());
+// Mock transport only: production never permits a loopback image URL.
+function mockDownload(t, handler) {
+  t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+  t.mock.method(http, 'get', (_url, _options, callback) => {
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = () => {};
+    process.nextTick(() => {
+      const res = new PassThrough();
+      res.statusCode = 200; res.headers = { 'content-type': 'image/png' };
+      callback(res); handler(res);
+    });
+    return req;
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  try {
-    await assert.rejects(downloadExternalFile(`http://127.0.0.1:${port}/x.png`));
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
+}
+
+test('download rejects (does not hang) when the connection aborts mid-stream', async (t) => {
+  mockDownload(t, (res) => { res.write('partial-bytes'); res.emit('aborted'); });
+  await assert.rejects(downloadExternalFile('http://images.example/x.png'), /中断/);
 });
 
-test('download resolves for a complete small image', async () => {
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'image/png' });
-    res.end(Buffer.from('image-bytes'));
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  try {
-    const result = await downloadExternalFile(`http://127.0.0.1:${port}/x.png`);
-    assert.equal(result.contentType, 'image/png');
-    assert.equal(result.buffer.toString(), 'image-bytes');
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
+test('download resolves for a complete small image', async (t) => {
+  mockDownload(t, (res) => res.end('image-bytes'));
+  const result = await downloadExternalFile('http://images.example/x.png');
+  assert.equal(result.contentType, 'image/png');
+  assert.equal(result.buffer.toString(), 'image-bytes');
 });

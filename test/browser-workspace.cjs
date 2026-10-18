@@ -62,9 +62,19 @@ const { chromium } = require('playwright');
     await page.locator('#prompt').fill('durable unfinished draft');
     await page.locator('#referenceFileInput').setInputFiles({ name: 'reference.png', mimeType: 'image/png', buffer: png });
     await page.waitForFunction(() => ImageGen.state.referenceImages.length === 1);
+    await page.evaluate(() => ImageGen.saveWorkspaceDraft());
     await page.reload();
     await page.waitForFunction(() => document.querySelector('#prompt').value === 'durable unfinished draft' && ImageGen.state.referenceImages.length === 1);
-    await page.waitForTimeout(6000);
+    await page.evaluate(async () => {
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline) {
+        await ImageGen.recoverPendingGeneration();
+        const response = await fetch('/api/me/tasks', { headers: { Authorization: `Bearer ${ImageGen.state.session.token}` } });
+        const feed = await response.json();
+        if (feed.tasks?.length === 2 && feed.tasks.every(t => t.status === 'completed')) return;
+      }
+      throw new Error('Mock tasks did not reach completed state');
+    });
     assert.equal(await page.locator('#prompt').inputValue(), 'durable unfinished draft');
     assert.equal(calls, 2, 'double click must not produce a third paid provider call');
     await page.locator('#taskCapsule').click();
@@ -83,7 +93,7 @@ const { chromium } = require('playwright');
     });
     assert.equal(feed.status, 200, 'real HTTP router exposes task feed');
     assert.equal(feed.body.tasks.length, 2);
-    assert.ok(feed.body.tasks.every(t => t.status === 'completed'));
+    assert.ok(feed.body.tasks.every(t => t.status === 'completed'), JSON.stringify(feed.body));
     await page.locator('#taskCapsule').click();
     const firstCard = page.locator('.task-card').filter({ hasText: 'first overlappi…' });
     await firstCard.locator('.task-card-open').click();
@@ -110,6 +120,32 @@ const { chromium } = require('playwright');
     assert.equal(await otherPage.locator('#taskDrawer').evaluate(el => el.scrollWidth <= el.clientWidth), true);
     await otherPage.screenshot({ path: '/tmp/image-capsule-mobile.png' });
     await otherContext.close();
+    // Exercise copy completeness against the real integrated task DTO, not just
+    // frontend mocks: two original inputs must return once, in their original order.
+    await page.locator('#prompt').fill('copy complete archived inputs');
+    const secondPng = await sharp({ create: { width: 60, height: 80, channels: 3, background: '#994466' } }).png().toBuffer();
+    await page.locator('#referenceFileInput').setInputFiles([
+      { name: 'first.png', mimeType: 'image/png', buffer: png },
+      { name: 'second.png', mimeType: 'image/png', buffer: secondPng }
+    ]);
+    await page.waitForFunction(() => ImageGen.state.referenceImages.length === 2);
+    const originalInputs = await page.evaluate(() => ImageGen.state.referenceImages.map(ref => ref.value));
+    await page.locator('#runBtn').click();
+    await page.waitForFunction(() => !ImageGen.state.isBusy && ImageGen.state.result?.prompt === 'copy complete archived inputs');
+    await page.waitForFunction(async () => {
+      const result = await ImageGen.requestJson('/api/me/tasks');
+      return result.json?.tasks?.some(task => task.prompt === 'copy complete archived inputs' && !task.active && task.referenceImageCount === 2 && task.inputFiles.length === 2);
+    });
+    await page.locator('#taskCapsule').click();
+    await page.locator('.task-card').filter({ hasText: 'copy complete a…' }).locator('.task-card-copy').click();
+    await page.waitForFunction(() => !document.querySelector('#taskDrawer').open && !ImageGen.isWorkspaceReadOnly() && ImageGen.state.referenceImages.length === 2);
+    assert.deepEqual(await page.evaluate(() => ImageGen.state.referenceImages.map(ref => ref.value)), originalInputs);
+    assert.equal(await page.locator('#prompt').inputValue(), 'copy complete archived inputs');
+    assert.equal(calls, 3, 'copying inputs must not submit another paid provider request');
+    await page.evaluate(() => ImageGen.saveWorkspaceDraft());
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('#prompt').value === 'copy complete archived inputs' && ImageGen.state.referenceImages.length === 2);
+    assert.deepEqual(await page.evaluate(() => ImageGen.state.referenceImages.map(ref => ref.value)), originalInputs);
     // Durable editor mutations and old transient flags must not lock a restored editor.
     await page.evaluate(async (image) => {
       ImageGen.loadEditImage(image, 'upload');
@@ -119,7 +155,7 @@ const { chromium } = require('playwright');
       ImageGen.els.editAspectRatio.value = '16:9'; ImageGen.els.editResolution.value = '2k';
       ImageGen.setEditTool('rect'); ImageGen.setEditColor('#ef4444'); ImageGen.setEditWidthTier(2);
       ImageGen.state.edit.referencesLoading = true; ImageGen.state.edit.imageLoading = true;
-      ImageGen.saveWorkspaceDraft();
+      await ImageGen.saveWorkspaceDraft();
     }, `data:image/png;base64,${png.toString('base64')}`);
     await page.reload();
     await page.waitForFunction(() => ImageGen.state.edit?.image && !ImageGen.state.edit.imageLoading && !ImageGen.state.edit.referencesLoading);

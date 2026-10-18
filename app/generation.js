@@ -44,10 +44,12 @@
       ns.renderNotifyToggle();
       return;
     }
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token, email = ns.state.session?.user?.email;
     let permission = window.Notification.permission;
     if (permission === 'default') {
       try { permission = await window.Notification.requestPermission(); } catch { permission = window.Notification.permission; }
     }
+    if (!ns.isAccountContextCurrent(epoch, token, email)) return;
     if (permission === 'granted') {
       ns.setNotifyPref(true);
       ns.setStatus('已开启：任务到达终态且页面在后台时会发送浏览器通知。', 'ok');
@@ -57,20 +59,22 @@
     }
     ns.renderNotifyToggle();
   };
-  let lastNotifiedKey = '';
-  ns.resetNotifyDedup = () => { lastNotifiedKey = ''; };
+  const notifiedKeys = new Set();
+  ns.resetNotifyDedup = () => { notifiedKeys.clear(); };
   // 仅在偏好开启、权限 granted、页面不可见(document.hidden)时发通知；同一终态只发一次。
   ns.notifyGenerationComplete = (result, summary) => {
     if (!ns.notificationsSupported() || !ns.isNotifyEnabled()) return;
     if (window.Notification.permission !== 'granted') return;
     if (typeof document === 'undefined' || !document.hidden) return;
-    const id = `${result?.batchId || result?.taskId || 'result'}:${result?.status || ''}`;
-    if (id === lastNotifiedKey) return;
-    lastNotifiedKey = id;
+    const email = ns.state.session?.user?.email, epoch = ns.state.accountEpoch, token = ns.state.session?.token;
+    if (!email || !token) return;
+    const id = `${email}:${result?.clientRequestId || result?.id || result?.batchId || result?.taskId}:${result?.status || ''}`;
+    if (notifiedKeys.has(id)) return;
+    notifiedKeys.add(id);
     try {
       const notification = new window.Notification('图片生成完成', { body: summary, tag: id });
       notification.onclick = () => {
-        try { window.focus(); } catch {}
+        if (ns.isAccountContextCurrent(epoch, token, email)) { try { window.focus(); } catch {} }
         notification.close();
       };
     } catch {}

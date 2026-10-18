@@ -5,14 +5,8 @@ const { loadDataStore, withDataStoreMutation } = require('../lib/store');
 const { requireSession, sendAuthError, publicUser, setSessionCookie } = require('../lib/auth');
 const { decodePathPart } = require('../lib/common');
 const { refreshLogsFromUpstream, markStaleSubmittingUnknown } = require('../lib/spend-logs');
-const { purgeStoredImageFiles } = require('../lib/image-store');
-const { removePendingResultSpool } = require('../lib/image-assets');
+const { canPermanentlyDeleteAssets, completeAssetDeletion } = require('../lib/image-assets');
 const { batchDto, getBatchLogs, neutralizeSubmitEcho } = require('./api-market');
-
-const TERMINAL_GENERATION_STATUSES = new Set([
-  'completed', 'succeeded', 'success', 'failed', 'cancelled', 'error', 'submit_failed_refunded', 'submission_refunded_closed'
-
-]);
 
 function groupHistoryLogs(logs) {
   const output = [];
@@ -89,42 +83,41 @@ async function handleMe(req, res, pathname, url) {
   if (assetMatch && req.method === 'DELETE') {
     if (req.headers['x-confirm-delete'] !== 'permanent') { sendJson(res, 400, { error: { message: '需要明确永久删除确认。' } }); return; }
     const id = decodePathPart(assetMatch[1]);
-    const logs = collectDeletableGenerationLogs(loadDataStore(), auth.email, id);
-    if (!logs.length) { sendJson(res, 404, { error: { message: '作品不存在。' } }); return; }
-    if (logs.some((log) => log.settled !== true || !TERMINAL_GENERATION_STATUSES.has(String(log.status || '').toLowerCase()))) { sendJson(res, 409, { error: { message: '仅已结算的终态任务可以永久删除资产。' } }); return; }
-    // Phase 1 tombstones every image address at once, so no reader can serve a URL
-    // while phase 2 is still unlinking bytes. Financial identity (settled, charged,
-    // balances, price detail) is deliberately preserved.
-    await withDataStoreMutation((latest) => {
-      for (const log of collectDeletableGenerationLogs(latest, auth.email, id)) {
+    // Recheck authorization and eligibility in the queue, not against a snapshot
+    // taken before another mutation (logout, disablement or task state change).
+    const tombstoned = await withDataStoreMutation((latest) => {
+      const latestAuth = requireSession(req, latest);
+      if (!latestAuth.ok) return { auth: latestAuth };
+      const logs = collectDeletableGenerationLogs(latest, latestAuth.email, id);
+      if (!logs.length) return { notFound: true };
+      if (logs.some((log) => !canPermanentlyDeleteAssets(log))) return { conflict: true };
+      for (const log of logs) {
         log.assetsDeletedAt = log.assetsDeletedAt || new Date().toISOString();
         log.remoteImageUrls = []; log.imageUrls = []; log.assetDeletionStatus = 'pending';
-        // The persisted upstream submit echo is spread verbatim by the legacy task DTO and
-        // by every history/list read, so it is neutralized in this same mutation: patching
-        // the read sites one by one would always leave one more path open. Its identity
-        // fields survive under an address-free field for admin diagnosis.
         neutralizeSubmitEcho(log);
         delete log.imageSaveErrors;
       }
+      return { ids: logs.map((log) => log.id) };
     });
+    if (tombstoned.auth) { sendAuthError(res, tombstoned.auth); return; }
+    if (tombstoned.notFound) { sendJson(res, 404, { error: { message: '作品不存在。' } }); return; }
+    if (tombstoned.conflict) { sendJson(res, 409, { error: { message: '仅已结算的终态任务可以永久删除资产。' } }); return; }
     try {
-      // Stored files come from the pre-tombstone snapshot: phase 1 keeps imageFiles so a
-      // failure below stays retryable instead of stranding bytes with no record of them.
-      const purged = purgeStoredImageFiles(logs.map((log) => ({ imageFiles: [...(log.imageFiles || []), ...(log.inputFiles || [])] })));
-      if (!purged.ok) throw new Error(`资产删除失败：${purged.remaining.length} 个文件`);
-      // The runner spool holds a full base64 copy of the paid result; a permanent delete
-      // must clear it too or the image survives on the volume after the user deleted it.
-      for (const log of logs) removePendingResultSpool(log.id);
+      const result = await withDataStoreMutation((latest) => {
+        const latestAuth = requireSession(req, latest);
+        if (!latestAuth.ok) return { auth: latestAuth };
+        const logs = latest.spendLogs.filter((log) => tombstoned.ids.includes(log.id) && log.email === latestAuth.email);
+        if (logs.length !== tombstoned.ids.length) throw new Error('作品已变更。');
+        if (logs.some((log) => require('../lib/image-task-runner').isTaskActive(log.id))) return { pending: true };
+        completeAssetDeletion(latest, logs);
+        return {};
+      });
+      if (result.auth) { sendAuthError(res, result.auth); return; }
+      if (result.pending) { sendJson(res, 409, { error: { message: '资产已停止访问，后台写入尚未结束，请稍后重试永久删除。' } }); return; }
     } catch {
       sendJson(res, 500, { error: { message: '资产尚未删除干净，请重试永久删除；未标记为已完成。' } });
       return;
     }
-    await withDataStoreMutation((latest) => {
-      for (const log of collectDeletableGenerationLogs(latest, auth.email, id)) {
-        log.imageFiles = []; log.inputFiles = []; log.imageUrls = []; log.remoteImageUrls = [];
-        log.assetDeletionStatus = 'complete';
-      }
-    });
     sendJson(res, 200, { ok: true }); return;
   }
 
@@ -142,7 +135,7 @@ async function handleMe(req, res, pathname, url) {
       // Batch unknowns remain protected, including requests targeting a child id.
       const standaloneUnknown = logs.length === 1 && logs[0].status === 'submission_unknown'
         && !logs[0].batchId && !logs[0].batch_id;
-      if (!standaloneUnknown && logs.some((log) => log.settled !== true || !TERMINAL_GENERATION_STATUSES.has(String(log.status || '').toLowerCase()))) {
+      if (!standaloneUnknown && logs.some((log) => !canPermanentlyDeleteAssets(log))) {
         return { conflict: true };
       }
       const timestamp = new Date().toISOString();

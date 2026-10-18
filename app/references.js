@@ -4,8 +4,11 @@
   const makeId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const remainingSlots = () => ns.constants.MAX_REFERENCE_IMAGES - ns.state.referenceImages.length;
   const totalReferenceBytes = () => ns.state.referenceImages.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
-  const captureAccountContext = () => ({ epoch: ns.state.accountEpoch, ownerEmail: ns.state.session?.user?.email || '' });
-  const isAccountContextCurrent = (context) => context.epoch === ns.state.accountEpoch
+  let referenceGeneration = 0;
+  ns.invalidateReferenceReads = () => { ns.invalidateWorkspaceDraftOperation?.(); return ++referenceGeneration; };
+  ns.isReferenceGenerationCurrent = generation => generation === referenceGeneration;
+  const captureAccountContext = () => ({ generation: referenceGeneration, epoch: ns.state.accountEpoch, ownerEmail: ns.state.session?.user?.email || '' });
+  const isAccountContextCurrent = (context) => context.generation === referenceGeneration && context.epoch === ns.state.accountEpoch
     && context.ownerEmail === (ns.state.session?.user?.email || '');
 
   ns.validateReferenceFile = (file) => {
@@ -27,7 +30,8 @@
 
   ns.addReferenceImage = (item) => {
     if (ns.isWorkspaceReadOnly?.()) return false;
-    if (remainingSlots() <= 0) return false;
+    if (remainingSlots() <= 0 || totalReferenceBytes() + (Number(item.bytes) || 0) > ns.constants.MAX_REFERENCE_TOTAL_BYTES) return false;
+    ns.invalidateWorkspaceDraftOperation?.();
     ns.state.referenceImages.push({ id: makeId(), type: item.type, value: item.value, name: item.name || '', bytes: item.bytes || 0 });
     return true;
   };
@@ -75,6 +79,7 @@
   };
 
   ns.addReferenceUrls = async (urls, sourceLabel = '图片') => {
+    ns.invalidateWorkspaceDraftOperation?.();
     const accountContext = captureAccountContext();
     let added = 0;
     let skipped = 0;
@@ -128,6 +133,7 @@
   // 返回 { added, rejected, aborted }；aborted=true 表示中途账号切换，调用方应放弃后续渲染。
   ns.addReferenceFileList = async (fileList) => {
     if (ns.isWorkspaceReadOnly?.()) return false;
+    ns.invalidateWorkspaceDraftOperation?.();
     const accountContext = captureAccountContext();
     const files = Array.from(fileList || []);
     let added = 0;
@@ -151,6 +157,10 @@
       try {
         const value = await fileToDataUrl(file);
         if (!isAccountContextCurrent(accountContext)) return { added, rejected, aborted: true };
+        if (totalReferenceBytes() + file.size > ns.constants.MAX_REFERENCE_TOTAL_BYTES) {
+          rejected.push(`${label}：本地文件合计将超过 18MB`);
+          continue;
+        }
         if (ns.addReferenceImage({ type: 'file', value, name: label, bytes: file.size })) added += 1;
       } catch {
         rejected.push(`${label}：文件读取失败`);
@@ -225,6 +235,7 @@
 
   ns.removeReference = (id) => {
     if (ns.isWorkspaceReadOnly?.()) return false;
+    ns.invalidateReferenceReads();
     ns.state.referenceImages = ns.state.referenceImages.filter((item) => item.id !== id);
     ns.renderReferences();
     ns.setReferenceStatus('已删除参考图。', 'ok');
@@ -232,6 +243,7 @@
 
   ns.clearReferences = () => {
     if (ns.isWorkspaceReadOnly?.()) return false;
+    ns.invalidateReferenceReads();
     ns.state.referenceImages = [];
     if (ns.els.referenceFileInput) ns.els.referenceFileInput.value = '';
     ns.renderReferences();

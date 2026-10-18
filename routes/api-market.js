@@ -531,8 +531,14 @@ async function handleGeneration(req, res, config) {
     return;
   }
   const requestHash = canonicalPayloadHash(payload);
+  const latestDataBeforeGate = loadDataStore();
+  const authBeforeGate = requireSession(req, latestDataBeforeGate);
+  if (!authBeforeGate.ok) {
+    sendAuthError(res, authBeforeGate);
+    return;
+  }
   const existingBeforeGate = existingRequestResult(
-    existingGenerationsByClientRequest(loadDataStore(), auth.email, clientRequestId),
+    existingGenerationsByClientRequest(latestDataBeforeGate, authBeforeGate.email, clientRequestId),
     requestHash
   );
   if (existingBeforeGate?.conflict) {
@@ -558,12 +564,14 @@ async function handleGeneration(req, res, config) {
   const batchId = createId('batch');
   const singleId = createId('usage');
   const precharge = await withDataStoreMutation((latestData) => {
-    const existing = existingRequestResult(existingGenerationsByClientRequest(latestData, auth.email, clientRequestId), requestHash);
+    const latestAuth = requireSession(req, latestData);
+    if (!latestAuth.ok) return { auth: latestAuth };
+    const existing = existingRequestResult(existingGenerationsByClientRequest(latestData, latestAuth.email, clientRequestId), requestHash);
     if (existing) return existing;
-    const capacity = activeRequestLimit(latestData, auth.email);
+    const capacity = activeRequestLimit(latestData, latestAuth.email);
     if (capacity) return { activeLimit: capacity };
 
-    const user = latestData.users[auth.email];
+    const user = latestAuth.user;
     const balanceBefore = Number(user?.balanceMicros) || 0;
     if (!user?.active) return { ok: false, status: 403, message: '账号不可用。' };
     if (balanceBefore < cost.totalMicros) {
@@ -578,14 +586,14 @@ async function handleGeneration(req, res, config) {
     user.balanceMicros = balanceBefore - cost.totalMicros;
     user.updatedAt = timestamp;
     if (isQuickBatch) {
-      const logs = createBatchLogs({ batchId, email: auth.email, payload, childCost, balanceBefore, clientRequestId, requestHash, timestamp });
+      const logs = createBatchLogs({ batchId, email: latestAuth.email, payload, childCost, balanceBefore, clientRequestId, requestHash, timestamp });
       if (hybrid.enabled()) logs.forEach(hybrid.initializeHybridLog);
       latestData.spendLogs.push(...logs);
       return { ok: true, batchId, logs };
     }
     const log = createSingleLog({
       id: singleId,
-      email: auth.email,
+      email: latestAuth.email,
       payload,
       cost,
       balanceBefore,
@@ -599,6 +607,10 @@ async function handleGeneration(req, res, config) {
     return { ok: true, log };
   });
 
+  if (precharge.auth) {
+    sendAuthError(res, precharge.auth);
+    return;
+  }
   if (precharge.activeLimit) {
     sendJson(res, 409, { error: { code: 'active_request_limit', message: '进行中的请求已达上限。', ...precharge.activeLimit } });
     return;

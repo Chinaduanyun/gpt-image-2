@@ -447,44 +447,44 @@ test('history groups batch members, tombstones a settled batch, retains audit lo
   });
 });
 
-test('partial multi-image archival preserves slot order, retries missing files, and ignores tombstones', { concurrency: false }, async () => {
+test('partial multi-image archival preserves slot order, retries missing files, and ignores tombstones', { concurrency: false }, async (t) => {
   await withDataDir(async () => {
     let secondAttempts = 0;
-    const server = http.createServer((req, res) => {
-      if (req.url === '/second.png' && secondAttempts++ === 0) {
-        res.writeHead(503);
-        res.end('retry');
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'image/png' });
-      res.end(Buffer.from('image-bytes'));
+    const dns = require('node:dns').promises;
+    t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+    t.mock.method(http, 'get', (url, _options, callback) => {
+      const req = new EventEmitter();
+      req.setTimeout = () => req;
+      req.destroy = () => {};
+      process.nextTick(() => {
+        const res = new Readable({ read() {} });
+        res.statusCode = url.pathname === '/second.png' && secondAttempts++ === 0 ? 503 : 200;
+        res.headers = { 'content-type': 'image/png' };
+        callback(res);
+        if (!res.destroyed) { res.push(Buffer.from('image-bytes')); res.push(null); }
+      });
+      return req;
     });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const { port } = server.address();
-    const urls = [`http://127.0.0.1:${port}/first.png`, `http://127.0.0.1:${port}/second.png`];
+    const urls = ['http://images.example/first.png', 'http://images.example/second.png'];
     const log = { id: 'official_multi', imageFiles: [], imageUrls: [], remoteImageUrls: [] };
-    try {
-      await saveImagesForLog(log, urls);
-      assert.equal(log.imageUrls.length, 2);
-      assert.match(log.imageUrls[0], /^\/api\/stored-images\//);
-      assert.equal(log.imageUrls[1], urls[1]);
-      assert.equal(log.imageFiles.length, 1);
-      assert.equal(hasCompleteImageArchive(log, urls), false);
+    await saveImagesForLog(log, urls);
+    assert.equal(log.imageUrls.length, 2);
+    assert.match(log.imageUrls[0], /^\/api\/stored-images\//);
+    assert.equal(log.imageUrls[1], urls[1]);
+    assert.equal(log.imageFiles.length, 1);
+    assert.equal(hasCompleteImageArchive(log, urls), false);
 
-      await saveImagesForLog(log, urls);
-      assert.equal(log.imageUrls.length, 2);
-      assert.equal(log.imageUrls.every((url) => url.startsWith('/api/stored-images/')), true);
-      assert.equal(log.imageFiles.length, 2);
-      assert.equal(hasCompleteImageArchive(log, urls), true);
+    await saveImagesForLog(log, urls);
+    assert.equal(log.imageUrls.length, 2);
+    assert.equal(log.imageUrls.every((url) => url.startsWith('/api/stored-images/')), true);
+    assert.equal(log.imageFiles.length, 2);
+    assert.equal(hasCompleteImageArchive(log, urls), true);
 
-      const hidden = { ...log, hiddenFromHistory: true, status: 'completed' };
-      assert.equal(logNeedsRefresh(hidden), false);
-      assert.equal(mergeArchivedImages(hidden, { imageUrls: ['/new.png'], remoteImageUrls: urls, imageFiles: log.imageFiles }), true);
-      assert.deepEqual(hidden.imageUrls, ['/new.png']);
-      assert.equal(mergeArchivedImages({ ...hidden, assetsDeletedAt: new Date().toISOString() }, { imageUrls: ['/resurrect.png'], imageFiles: [] }), false);
-    } finally {
-      await new Promise((resolve) => server.close(resolve));
-    }
+    const hidden = { ...log, hiddenFromHistory: true, status: 'completed' };
+    assert.equal(logNeedsRefresh(hidden), false);
+    assert.equal(mergeArchivedImages(hidden, { imageUrls: ['/new.png'], remoteImageUrls: urls, imageFiles: log.imageFiles }), true);
+    assert.deepEqual(hidden.imageUrls, ['/new.png']);
+    assert.equal(mergeArchivedImages({ ...hidden, assetsDeletedAt: new Date().toISOString() }, { imageUrls: ['/resurrect.png'], imageFiles: [] }), false);
   });
 });
 

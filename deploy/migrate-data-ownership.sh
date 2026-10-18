@@ -52,12 +52,12 @@ done
 [ -n "$DIR_ARG" ] || die "缺少 --dir"
 case "$UID_ARG" in ''|*[!0-9]*) die "--uid 必须是非负整数：$UID_ARG" ;; esac
 case "$GID_ARG" in ''|*[!0-9]*) die "--gid 必须是非负整数：$GID_ARG" ;; esac
-[ "$UID_ARG" != "0" ] || die "拒绝迁移到 root(0)：容器必须以非 root 运行。"
-[ "$GID_ARG" != "0" ] || die "拒绝迁移到 gid 0：请提供非 root 组。"
+[[ "$UID_ARG" =~ [1-9] ]] || die "拒绝迁移到 root(0)：容器必须以非 root 运行。"
+[[ "$GID_ARG" =~ [1-9] ]] || die "拒绝迁移到 gid 0：请提供非 root 组。"
 [ -d "$DIR_ARG" ] || die "目录不存在或不是目录：$DIR_ARG"
 
 # 归一化为绝对路径，避免相对路径误伤。
-DIR_ABS="$(cd "$DIR_ARG" && pwd)"
+DIR_ABS="$(cd -P -- "$DIR_ARG" && pwd -P)"
 [ "$DIR_ABS" != "/" ] || die "拒绝对根目录 / 执行迁移。"
 
 echo "==============================================================================="

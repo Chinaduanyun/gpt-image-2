@@ -9,7 +9,7 @@
   ns.isQuickBatchEnabled = () => ns.state.publicConfig?.features?.quickBatchEnabled === true;
   ns.getImageCount = () => {
     const count = Math.max(1, Math.min(4, Number(ns.els.imageCount.value) || 1));
-    return ns.isOfficialModel() || ns.isQuickBatchEnabled() ? count : 1;
+    return ns.isOfficialModel() || ns.isQuickBatchEnabled() || ns.isWorkspaceReadOnly?.() ? count : 1;
   };
   ns.getPricingConfig = () => ns.state.publicConfig?.pricing || {};
   ns.getPixelSize = (size = ns.els.aspectRatio.value, resolution = ns.els.resolution.value) =>
@@ -112,6 +112,7 @@
       ns.els.priceWarning.classList.remove('hidden');
       ns.els.runBtn.disabled = true;
       ns.updateAdvancedSummary();
+      ns.applyWorkspaceLocks?.();
       return;
     }
 
@@ -137,12 +138,13 @@
     ns.els.priceWarning.textContent = warnings.join(' ');
     ns.els.priceWarning.classList.toggle('hidden', !warnings.length);
     ns.updateAdvancedSummary();
+    ns.applyWorkspaceLocks?.();
   };
 
   ns.updateModelUi = () => {
     const official = ns.isOfficialModel();
     const quickBatchEnabled = ns.isQuickBatchEnabled();
-    if (!official && !quickBatchEnabled) ns.els.imageCount.value = '1';
+    if (!official && !quickBatchEnabled && !ns.isWorkspaceReadOnly?.()) ns.els.imageCount.value = '1';
     ns.els.imageCount.disabled = ns.state.isBusy || (!official && !quickBatchEnabled);
     ns.els.modelNote.textContent = official
       ? (ns.constants.MODEL_NOTES[ns.els.model.value] || '')

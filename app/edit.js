@@ -169,6 +169,17 @@
     if (ns.els?.editPrompt) ns.els.editPrompt.value = '';
     ns.setEditReferenceStatus?.('');
   };
+  ns.resetAccountEditor = () => {
+    ns.resetEditState();
+    for (const [key, value] of Object.entries({ editModel: ns.els?.model?.value || 'gpt-image-2', editAspectRatio: 'follow', editResolution: '1k', editAnnotationText: ns.EDIT_DEFAULT_ANNOTATION })) {
+      if (ns.els?.[key]) ns.els[key].value = value;
+    }
+    if (ns.els?.editAppendToggle) ns.els.editAppendToggle.checked = true;
+    for (const key of ['editBaseCanvas', 'editAnnotationCanvas']) {
+      const canvas = ns.els?.[key];
+      if (canvas) canvas.width = canvas.width;
+    }
+  };
   ns.editHasImage = () => Boolean(ns.state.edit && ns.state.edit.image && ns.state.edit.naturalWidth);
   ns.isEditLocked = () => Boolean(ns.state.isBusy || ns.hasPendingGeneration?.()
     || ns.state.edit?.referencesLoading || ns.state.edit?.imageLoading);

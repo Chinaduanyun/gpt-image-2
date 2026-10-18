@@ -115,8 +115,7 @@ h2 {
 }
 
 .app-subtitle,
-.mini-note,
-.upload-note {
+.mini-note {
   color: var(--muted);
 }
 
@@ -136,27 +135,6 @@ h2 {
   display: grid;
   align-content: start;
   gap: 16px;
-}
-
-.provider-card-static {
-  display: grid;
-  gap: 6px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.72);
-  padding: 14px;
-}
-
-.provider-title,
-.provider-note {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.5;
-}
-
-.provider-card-static strong {
-  font-size: 18px;
 }
 
 .field-note {
@@ -191,7 +169,6 @@ h2 {
   font-size: 22px;
 }
 
-.price-detail,
 .price-warning {
   color: var(--muted);
   font-size: 12px;
@@ -206,31 +183,6 @@ h2 {
   padding: 8px 10px;
 }
 
-.mode-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  border-radius: var(--radius-md);
-  background: #edf2f7;
-  padding: 6px;
-}
-
-.mode-tab {
-  min-height: 42px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--muted-strong);
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.mode-tab.active {
-  background: #ffffff;
-  color: var(--text);
-  box-shadow: var(--shadow-md);
-}
-
 .field {
   display: grid;
   gap: 8px;
@@ -240,8 +192,7 @@ h2 {
   min-height: 260px;
 }
 
-label,
-.upload-title {
+label {
   display: block;
   font-size: 13px;
   font-weight: 700;
@@ -256,14 +207,12 @@ label,
 }
 
 .settings-grid,
-.upload-grid,
 .input-preview-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
-.upload-grid,
 .input-preview-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -309,26 +258,6 @@ input:focus {
   border-color: rgba(10, 132, 255, 0.55);
   box-shadow: 0 0 0 4px var(--accent-soft);
   background: #ffffff;
-}
-
-.upload-card {
-  min-height: 92px;
-  display: grid;
-  align-content: center;
-  gap: 8px;
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--border-strong);
-  background: rgba(255, 255, 255, 0.72);
-  padding: 14px;
-  cursor: pointer;
-}
-
-.upload-card.optional {
-  background: var(--panel-muted);
-}
-
-.upload-card input {
-  display: none;
 }
 
 .reference-card {
@@ -456,7 +385,6 @@ input:focus {
 }
 
 .actions,
-.quick-actions,
 .result-meta {
   display: flex;
   flex-wrap: wrap;
@@ -567,16 +495,10 @@ button.compact,
   line-height: 1.45;
 }
 
-.progress-elapsed,
-.progress-billing-note {
+.progress-elapsed {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-}
-
-.progress-billing-note {
-  margin: 0;
-  line-height: 1.55;
 }
 
 .progress-track {
@@ -959,10 +881,6 @@ button.compact,
   font-weight: 700;
 }
 
-.price-balance {
-  line-height: 1.55;
-}
-
 .generation-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1084,7 +1002,6 @@ button.compact,
   }
 
   .settings-grid,
-  .upload-grid,
   .input-preview-grid,
   .reference-layout,
   .history-content,

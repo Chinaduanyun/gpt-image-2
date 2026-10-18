@@ -1,15 +1,23 @@
 # 图片生成工作台
 
-这是一个基于 Node.js 22、无第三方运行时依赖的图片生成工作台。服务端代理上游图片接口，并将用户、会话、消费记录和生成图片持久化到 `DATA_DIR`。
+这是一个基于 Node.js 22 的图片生成工作台，使用 `sharp` 解码、校验和归档图片。服务端代理上游图片接口，并将用户、会话、消费记录和生成图片持久化到 `DATA_DIR`。
 
 ## 计费口径
 
+### 混合通道（`IMAGE_PROVIDER_MODE=cpa`）
+
+- 采用提交时锁定的固定报价（`fixed-quote-v2`）：成功按该报价结算，明确失败退款；供应商返回的 cost 不覆盖报价。提交结果未知时不自动重发、切换供应商或退款。
+- 优先 CPA；只有明确的技术性/不可用拒绝才允许转 Market 备用通道。已接受的 Market 任务只查询状态，不重新提交。多张图片拆成按原顺序展示的单图任务，仍受 `QUICK_BATCH_ENABLED` 控制。
+- 图片规格为尽力满足；创作和编辑共用一次简短费用确认。成品归档失败保留待恢复结果，不重新生成。供应商密钥由受控环境或私有配置文件提供，不能放在浏览器配置或仓库中。
+
+### API Market 兼容通道（未启用混合通道）
+
 - 新任务按模型选择计价策略：便宜渠道 `gpt-image-2` 的总系数为 **36**，官方渠道 `gpt-image-2-official` 的总系数为 **10.5**。供应商价格表和最终 `data.cost` 的单位均为美元 cost；总系数是业务计价参数，不代表或声明真实外汇汇率。
-- 所有新任务每张图片最低收费 **¥0.30（300000 micros）**。预估时先计算 `round(供应商单张美元价 × 模型总系数 × 1000000)`，再与单张下限取较大值并乘以张数；最终结算时对供应商返回的整个任务 `data.cost` 乘以日志快照中的模型总系数，再与任务提交时固化的 `300000 × n` 取较大值。不能把任务总成本再除以张数，也不能只对多图任务应用一次 ¥0.30。
+- 默认单张下限：便宜渠道 **¥0.30**；官方渠道按请求清晰度分别为 **1K ¥0.30、2K ¥0.55、4K ¥0.85**（可通过环境配置覆盖）。预估先计算 `round(供应商单张美元价 × 模型总系数 × 1000000)`，再与所选单张下限取较大值并乘以张数。最终结算将整个任务 `data.cost` 乘以该日志快照的模型总系数，再与提交时固化的 `minimumChargeMicros` 取较大值；不重新读取当前下限，不把任务总成本除以张数。
 - 官方 `1:1 · 4K · high` 单张精确预估为 `5978280 micros`，4 张为 `23913120 micros`。页面金额低于 ¥1 时显示 3 位小数，达到 ¥1 时显示 2 位小数，例如 `¥0.300`、`¥0.306`、`¥5.98`；显示格式不改变 API、余额、预扣、日志或结算中的整数 micros。
 - NAS legacy 旧口径总系数为 **50**。历史已结算记录保留原金额、不追溯改写；历史未结算任务有 `totalMultiplier` 快照时继续只按该快照线性结算，不追加新下限；没有倍率快照时继续按 legacy 50 结算。即使历史 official 快照是 36，也不能按当前 10.5 重算；缺少 `minimumChargeMicros` 时不能根据当前模型或张数反推下限。
 - `PRICING_TOTAL_MULTIPLIER` 作为 cheap 策略的兼容 fallback 保留，必须与 `PRICING_CURRENCY_RATE × PRICING_MARKUP_MULTIPLIER` 一致。新代码按模型 profile 估价和结算，不能用顶层 cheap 系数为 official 定价；`PRICING_LEGACY_TOTAL_MULTIPLIER` 只用于没有倍率快照的旧未结算任务。
-- 价格卡仅保留总价、价格详情、余额和警告，不再显示“单张价格 / 共几张 / 生成前预扣”三个冗余胶囊。缺少所选模型的公开 profile 时页面会提示配置异常并禁止生成，不会静默使用倍率 1。
+- 价格卡仅保留总价及必要警告；账号余额显示在顶部，不再展示重复的价格说明或余额预测。缺少所选模型的公开 profile 时页面会提示配置异常并禁止生成，不会静默使用倍率 1。
 - 部署前应在本地对典型模型、尺寸、质量、张数、预估、预扣、日志快照及最终结算逐项核对，不能只验证页面显示。
 - API Market 当前文档明确说明：便宜渠道的规范模型名是 `gpt-image-2`，并兼容别名 `gpt-image-2-ext`，两者效果一致、可互换使用。2026-07-10 通过生产网络查询 `/v1/models` 时只列出了 `gpt-image-2` 和 `gpt-image-2-official`，因此本项目继续统一发送规范名 `gpt-image-2`，同时在服务端接受并规范化 `gpt-image-2-ext`；不能再把 `gpt-image-2-ext` 描述成“仅展示名称或不可请求”。
 - 便宜渠道价格的代码单位是美元 cost，而不是页面 Credits：1K/2K/4K 分别为 `0.0085`、`0.014`、`0.021` 美元；按总系数 36 对应用户价格 `¥0.306`、`¥0.504`、`¥0.756`。`0.085 Credits` 对应的是 `$0.0085`，不能在代码里误写成 `0.085`。
@@ -26,7 +34,10 @@
 - `POST /api/api-market/v1/images/generations` 的批量响应包含 `kind=batch`、`batchId`/`batch_id`、`clientRequestId`/`client_request_id`、`requestedCount`、`counts`、按原索引排列的 `children`、`imageUrls`、`aggregateBilling` 和兼容字段 `billing`。每个 child 包含 `index`、`status`、`taskId`/`task_id`、图片、错误和独立 billing；批次 billing 由同一 `batchId` 下的普通 generation 日志临时聚合。
 - `GET /api/api-market/v1/batches/:batchId` 会按 `batchIndex` 遍历同一批次的普通 generation 日志，按成员独立结算并应用每张最低收费。合成批次状态可能为 `submitting`、`processing`、`completed`、`partial_success`、`failed` 或 `attention_required`；成功图片始终按 child index 合并，失败或未知位置仍在结果区保留槽位。
 - 合成批次只有在所有成员都结算后才算结清。明确失败且供应商未返回 cost 的成员会全额退款；失败但 cost 无效、完成但 cost 缺失/无效、以及 submission unknown 都不会被猜测结算或退款。合成 `settledActualCostMicros` 表示已结算成员小计，`actualCostMicros` 仅在全部成员结算后出现。
-- 作品库把同一个 `batchId` 的成员合成为一条记录，可展开查看按 index 排列的子任务。只有所有成员终态且账务结清时才可以“隐藏作品”；隐藏会给所有批次成员写入 tombstone 并清理归档图片，不删除账本、不会取消任务或触发退款。任务、批次、恢复记录和本地结果均按账号隔离。
+- 作品库把同一个 `batchId` 的成员合成为一条记录。隐藏只改变历史可见性，**保留图片及账本**，不取消任务、不退款；通常要求所有成员终态且结清，独立的 `submission_unknown` 允许仅隐藏，但批次未知仍受保护。
+- 永久删除资产是独立的 `DELETE /api/me/logs/:id/assets` 操作，需 `X-Confirm-Delete: permanent` 且所有成员已结算终态。先持久化 tombstone，再清理输入、成品和待归档副本；清理失败保留重试状态，账本和余额不删除。隐藏与永久删除不是同一个动作。
+- 多任务详情只读；“复制为新请求”才会把可用输入复制到草稿。默认最多同时运行 3 个请求组（批次算一个），限额与预扣同一原子事务检查，幂等重放不会再次计数或扣费。`GET /api/me/tasks` 提供账号任务与限额；新建草稿不受限额影响。提示词在任务胶囊中只显示前 15 个 Unicode code point，详情保留全文。
+- 草稿、参考图和编辑器按账号存于 IndexedDB；刷新后恢复已完成持久化的快照。异步存储并不保证浏览器被立即强制关闭前的最后一次修改已经落盘。
 - `runtime.env`、供应商 env 文件、`config.local.js` 和 `.data` 永远不在静态文件白名单内。浏览器只读取 `/api/public-config` 中的公开 feature/pricing 数据；该接口不会暴露 API key、代理凭据或 legacy 结算倍率。
 
 ## 标注编辑与参考图
@@ -37,12 +48,17 @@
 - 多图时自动附加图片用途说明；它不受“自动附加标注说明”开关控制，且计入最终 8000 字符上限。删除图片会重新排列图号，需核对修改说明中的引用。
 - 更换底图会在确认并成功载入后清空旧标注和参考图；取消或载入失败保留原编辑。注销/切换账号会清空编辑状态，未完成的旧账号图片读取不会回填。
 
+## 访问边界
+
+当前登录仅校验邮箱白名单，**不验证邮箱所有权**：知道已允许邮箱的人可以取得该账号会话，管理员邮箱同理。它不是密码或验证码认证。不要把邮箱白名单当作身份安全边界；不可信网络访问需另设可靠访问控制。此次整理不更改登录政策或自动添加密码。
+
 ## 本地验证
 
-需要 Node.js `>=22.0.0 <23.0.0`。项目不需要安装第三方依赖。
+需要 Node.js `>=22.0.0 <23.0.0`。先按锁文件安装运行依赖（包含 `sharp`）：
 
 ```sh
 node --version
+npm ci
 npm run check
 npm test
 npm start
@@ -79,14 +95,19 @@ NODE_PATH=/path/to/qa-tools/node_modules node test/browser-edit-references.cjs
 | `API_MARKET_API_KEY` | 空 | 上游 API 密钥 |
 | `API_MARKET_BASE_URL` | `https://api.apimart.ai` | 上游地址 |
 | `API_MARKET_MODEL` | `gpt-image-2` | 默认模型 |
-| `QUICK_BATCH_ENABLED` | `false` | 是否允许便宜渠道将 `n=2~4` 拆成并发单图子任务 |
+| `QUICK_BATCH_ENABLED` | `false` | 是否允许快速批量（混合通道多图也受此开关约束） |
+| `MAX_ACTIVE_REQUESTS` | `3` | 每账号进行中请求组上限，正整数；未知请求仍占位 |
+| `IMAGE_PROVIDER_MODE` | 空 | `cpa` 启用混合通道，否则使用 API Market 兼容通道 |
 | `PRICING_CURRENCY_RATE` | `10` | cheap 兼容计价换算系数（业务参数，不代表真实外汇汇率） |
 | `PRICING_MARKUP_MULTIPLIER` | `3.6` | cheap 兼容业务倍率 |
 | `PRICING_TOTAL_MULTIPLIER` | `36` | cheap 策略总系数的兼容 fallback，必须等于前两项乘积 |
 | `PRICING_GPT_IMAGE_2_TOTAL_MULTIPLIER` | `36` | `gpt-image-2` 新任务总系数 |
 | `PRICING_GPT_IMAGE_2_MINIMUM_PER_IMAGE_MICROS` | `300000` | `gpt-image-2` 每张最低收费，正安全整数 micros |
 | `PRICING_GPT_IMAGE_2_OFFICIAL_TOTAL_MULTIPLIER` | `10.5` | `gpt-image-2-official` 新任务总系数 |
-| `PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS` | `300000` | `gpt-image-2-official` 每张最低收费，正安全整数 micros |
+| `PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS` | `300000` | 官方渠道未知清晰度时的兼容下限 |
+| `PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS_1K` | `300000` | 官方 1K 单张下限 |
+| `PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS_2K` | `550000` | 官方 2K 单张下限 |
+| `PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS_4K` | `850000` | 官方 4K 单张下限 |
 | `PRICING_LEGACY_TOTAL_MULTIPLIER` | `50` | 仅用于没有倍率快照的旧未结算任务 |
 | `PRICING_VERSION` | `2026-07-10-model-policy-v1` | 新任务计价快照版本标记 |
 
@@ -104,9 +125,9 @@ PRICING_GPT_IMAGE_2_OFFICIAL_MINIMUM_PER_IMAGE_MICROS=300000
 
 Compose 的 `environment` 优先级高于 `env_file`。因此 `compose.yaml` 只在 `environment` 中固定容器运行所需的 `HOST`、`PORT` 和 `DATA_DIR`，不会为密钥、上游地址、模型或计价变量写入空值/默认值并覆盖 `runtime.env`。`QUICK_BATCH_ENABLED` 也应随这些应用配置写入未提交的 `runtime.env`；文件中未提供时，由应用代码使用上表默认值。可复制 `runtime.env.example` 为 `runtime.env` 后填写真实值；示例文件只含占位符和非敏感默认值。修改 `QUICK_BATCH_ENABLED` 后必须重启 Node 进程或容器，因为该开关在服务启动时读取。
 
-## Docker 本地示例
+## Docker 部署示例
 
-`compose.yaml` 中的 `./.data:/data` 仅用于本地开发示例。容器以显式非 root 身份运行：`user:` 字段写作 `"${APP_UID:?…}:${APP_GID:?…}"`，未提供 `APP_UID`/`APP_GID` 时 Compose 直接报错，不存在写死的 `0:0` root 回退，也不会猜测镜像内 `node` 用户的 UID/GID。本地可使用当前用户身份：
+仓库的 `compose.yaml` 当前挂载 NAS 绝对路径 `/volume2/docker/gpt-image-2/data:/data`，**不是本地隔离示例**。本地 Docker 验证应复制为临时 Compose 文件并把数据挂载改到全新临时目录，不能指向生产数据。容器以显式非 root 身份运行：`user:` 字段写作 `"${APP_UID:?…}:${APP_GID:?…}"`，未提供 `APP_UID`/`APP_GID` 时 Compose 直接报错，不存在写死的 `0:0` root 回退，也不会猜测镜像内 `node` 用户的 UID/GID。本地可使用当前用户身份：
 
 ```sh
 export APP_UID="$(id -u)"
@@ -123,23 +144,23 @@ docker compose ps
 
 ## NAS 数据、快照与回滚
 
-当前 NAS 路径已经审计确认：
+NAS 部署按 release 保存源码、镜像与回退配置；旧 `/app` Git 工作目录不应当作当前线上源码。部署前以运行容器挂载和对应 release 清单为准：
 
 | 用途 | NAS 路径 | 容器路径 |
 | --- | --- | --- |
-| 应用目录 | `/volume2/docker/gpt-image-2/app` | `/app` |
-| 运行配置（含密钥） | `/volume2/docker/gpt-image-2/app/runtime.env` | 通过运行环境注入 |
+| 当前源码快照 | `/volume2/docker/gpt-image-2/releases/<release>/source` | 构建至镜像 `/app` |
+| 部署与私有运行配置 | `/volume2/docker/gpt-image-2/releases/<release>/` 及受控供应商配置位置 | 环境变量或 `/run/secrets` 私有挂载 |
 | 业务数据根目录 | `/volume2/docker/gpt-image-2/data` | `/data` |
 | 主数据 JSON | `/volume2/docker/gpt-image-2/data/app-data.json` | `/data/app-data.json` |
 | 生成图片目录 | `/volume2/docker/gpt-image-2/data/images/` | `/data/images/` |
 
 NAS 部署时应继续使用宿主绝对路径 `/volume2/docker/gpt-image-2/data:/data`，不要照搬本地示例的 `./.data:/data`。`runtime.env` 含真实密钥，只能保留在受控的 NAS 运行配置位置，不得复制进镜像、构建上下文或版本仓库，也不得把其真实内容写入备份说明或迁移记录。
 
-审计时，数据根目录为 mode `700`、owner `1001:10`，但 `app-data.json` 和 `images/` 下已有内容存在 `root:root`、mode `600`。镜像默认的 `node` 用户通常是 UID 1000，但正式部署不得依赖这一假设。必须先选定新容器明确的非 root `APP_UID:APP_GID`，再使待切换数据副本的根目录、JSON、`images/` 及其全部内容归属于该身份并保持所需的目录遍历、读取和写入权限。
+历史审计曾发现数据所有权不一致；2026-10-18 的生产容器以明确的 `1000:1000` 运行。后续部署仍应核实实际所有权，不能依赖镜像内 `node` 用户的默认 UID。必须先选定新容器明确的非 root `APP_UID:APP_GID`，再使待切换数据副本的根目录、JSON、`images/` 及其全部内容归属于该身份并保持所需的目录遍历、读取和写入权限。
 
 升级前执行一致快照：
 
-1. 停止旧容器或至少阻止写入，确认没有生成、结算或后台刷新正在修改数据。2026-07-10 的只读审计发现 3 条 `settled=false`、`status=submitting` 且没有 `taskId` 的旧记录；它们无法通过上游任务接口自动追踪。正式切换前必须逐条人工核对并记录退款、保留预扣或其他处置决定，不能把它们误当作可按 legacy 50 自动结算的正常在途任务。
+1. 确认没有真实在途生成后，停止旧容器或阻止全部写入，冻结生成、结算和后台刷新。已有 3 条历史未知记录已由用户确认为测试记录，保持原样，不删除、不重发、不退款，也不把它们当作可自动结算的正常在途任务。
 2. 将 `/volume2/docker/gpt-image-2/data/app-data.json` 与 `/volume2/docker/gpt-image-2/data/images/` 作为一个不可拆分的数据集，在同一冻结点完成一致性快照或完整复制。不能先后在业务仍可写入时分别复制，也不能只备份 JSON 而遗漏图片。
 3. 只在一致快照的可写副本上，将数据根目录、`app-data.json`、`images/` 及其全部内容递归调整为已经明确选定的 `APP_UID:APP_GID`，并设置最小必要的目录和文件权限（目录 700、文件 600）。可使用 `deploy/migrate-data-ownership.sh --uid <UID> --gid <GID> --dir <快照副本目录>`：默认 `--dry-run` 只打印将执行的 `chown`/`chmod` 与探针命令，确认无误后再加 `--apply` 真正执行；脚本拒绝迁移到 root 且只应指向快照副本。不得先对唯一生产数据原件执行 `chown`、`chmod` 或写入测试。
 4. 先以相同 UID/GID 对快照副本做读写探针。例如将副本挂载到 `/data` 后运行 `docker run --rm --user "$APP_UID:$APP_GID" -v /已确认的快照副本:/data:rw node:22-alpine sh -c 'test -r /data/app-data.json && test -d /data/images && test -x /data/images && probe=/data/.permission-probe-$$ && : > "$probe" && rm "$probe"'`；也可用实际新容器执行等价探针。路径必须替换为快照副本，不能指向唯一生产目录。

@@ -35,6 +35,7 @@ const ledger = { id: 'ledger', type: 'balance_adjustment', kind: 'batch', prompt
       await page.evaluate(() => {
         window.ImageGen = {
           formatMicros: (value) => String(value ?? 0),
+          isAccountContextCurrent: () => true,
           state: { myLogs: [], historySearch: '', historyFilter: 'all' },
           els: Object.fromEntries(['myLogsList', 'historySearchInput', 'historyFilterSelect'].map((id) => [id, document.getElementById(id)]))
         };

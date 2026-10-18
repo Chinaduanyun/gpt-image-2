@@ -7,6 +7,7 @@ const { requireSession, sendAuthError } = require('../lib/auth');
 const { getImageContentType } = require('../lib/image-store');
 
 async function handleStoredImage(req, res, pathname) {
+  res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: { message: 'Method Not Allowed' } });
     return;
@@ -43,12 +44,24 @@ async function handleStoredImage(req, res, pathname) {
   }
 
   fs.readFile(normalizedPath, (error, dataBuffer) => {
+    // Disk I/O can finish after logout, disablement or a durable delete tombstone.
+    // Re-read the authoritative store immediately before releasing any bytes.
+    const latest = loadDataStore();
+    const latestAuth = requireSession(req, latest);
+    if (!latestAuth.ok) { sendAuthError(res, latestAuth); return; }
+    const current = latest.spendLogs.find((log) => log.id === ownerLog.id);
+    if (!current || current.assetsDeletedAt || ![...(current.imageFiles || []), ...(current.inputFiles || [])].some((file) => file.fileName === fileName)) {
+      send(res, 404, 'Not Found'); return;
+    }
+    if (latestAuth.email !== auth.email || (!latestAuth.user.isAdmin && current.email !== latestAuth.email)) {
+      send(res, 403, 'Forbidden'); return;
+    }
     if (error) {
       send(res, error.code === 'ENOENT' ? 404 : 500, error.code === 'ENOENT' ? 'Not Found' : 'Internal Server Error');
       return;
     }
     send(res, 200, dataBuffer, getImageContentType(fileName), {
-      'Cache-Control': 'private, max-age=86400'
+      'Cache-Control': 'no-store'
     });
   });
 }

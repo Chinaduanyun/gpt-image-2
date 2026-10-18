@@ -50,10 +50,12 @@
     const confirmed = window.confirm('确认退款并关闭这条“提交状态未知”记录吗？\n\n将退还该请求已扣余额，并永久关闭此记录；不会删除记录、不会重试或创建任务。');
     if (!confirmed) return;
     button.disabled = true;
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
     const result = await ns.requestJson(`/api/admin/spend-logs/${encodeURIComponent(logId)}/refund-and-close`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ reason: '管理员确认：无任务编号的提交状态未知记录退款并关闭' })
     });
+    if (!ns.isAccountContextCurrent(epoch, token)) return;
     if (!result.ok) {
       button.disabled = false;
       return ns.setAdminStatus(ns.getErrorMessage(result, '退款并关闭失败。请刷新记录后重试。'), 'error');
@@ -84,15 +86,18 @@
       else ns.els.adminLogsBody.innerHTML = `<tr><td colspan="9">${ns.escapeHtml(ns.getErrorMessage(logsResult, '消费日志加载失败，请重试。'))}</td></tr>`;
       ns.setAdminStatus(usersResult.ok && logsResult.ok ? '管理数据已更新。' : '部分管理数据加载失败，请重试。', usersResult.ok && logsResult.ok ? 'ok' : 'error');
     } catch (error) {
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       ns.setAdminStatus(`管理数据加载失败：${error?.message || error}`, 'error');
     } finally {
-      ns.els.adminRefreshBtn.disabled = false;
+      if (ns.isAccountContextCurrent(epoch, token)) ns.els.adminRefreshBtn.disabled = false;
     }
   };
   ns.handleAdminAddUser = async () => {
     const email = ns.els.adminAddEmail.value.trim();
     if (!email) return ns.setAdminStatus('请输入用户邮箱。', 'error');
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
     const result = await ns.requestJson('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ email, name: ns.els.adminAddName.value.trim(), balanceMicros: ns.parseUsdInput(ns.els.adminAddBalance.value), active: true }) });
+    if (!ns.isAccountContextCurrent(epoch, token)) return;
     if (!result.ok) return ns.setAdminStatus(ns.getErrorMessage(result, `添加失败：HTTP ${result.status}`), 'error');
     ns.els.adminAddEmail.value = '';
     ns.els.adminAddName.value = '';
@@ -105,21 +110,27 @@
     const email = row.dataset.email;
     if (event.target.classList.contains('admin-save-user')) {
       const name = row.querySelector('.admin-name-input').value;
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
       const result = await ns.requestJson(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ name }) });
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       ns.setAdminStatus(result.ok ? '用户已保存。' : ns.getErrorMessage(result, '保存失败。'), result.ok ? 'ok' : 'error');
       await ns.loadAdminData();
       return;
     }
     if (event.target.classList.contains('admin-toggle-user')) {
       const active = event.target.textContent.trim() === '启用';
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
       const result = await ns.requestJson(`/api/admin/users/${encodeURIComponent(email)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ active }) });
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       ns.setAdminStatus(result.ok ? '用户状态已更新。' : ns.getErrorMessage(result, '更新失败。'), result.ok ? 'ok' : 'error');
       await ns.loadAdminData();
       return;
     }
     if (event.target.classList.contains('admin-add-balance')) {
       const deltaUsd = row.querySelector('.admin-delta-input').value;
+      const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
       const result = await ns.requestJson(`/api/admin/users/${encodeURIComponent(email)}/balance`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ deltaMicros: ns.parseUsdInput(deltaUsd), reason: '手动调额' }) });
+      if (!ns.isAccountContextCurrent(epoch, token)) return;
       ns.setAdminStatus(result.ok ? '余额已调整。' : ns.getErrorMessage(result, '调额失败。'), result.ok ? 'ok' : 'error');
       await ns.loadAdminData();
     }
