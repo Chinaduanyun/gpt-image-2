@@ -87,15 +87,20 @@
   capsule.id = 'taskCapsule'; capsule.className = 'task-capsule'; capsule.type = 'button'; capsule.setAttribute('aria-haspopup', 'dialog');
   const drawer = document.createElement('dialog'); drawer.id = 'taskDrawer'; drawer.className = 'task-drawer'; drawer.setAttribute('aria-label', '任务工作区');
   let returnFocus = null;
-  const close = document.createElement('button'); close.textContent = '关闭任务列表'; close.onclick = () => drawer.close();
+  const close = document.createElement('button'); close.textContent = '×'; close.className = 'task-drawer-close'; close.setAttribute('aria-label', '关闭任务列表'); close.onclick = () => drawer.close();
   const next = document.createElement('button'); next.textContent = '+ 新建下一次'; next.id = 'newDraftBtn';
   const resume = document.createElement('button'); resume.textContent = '返回未完成草稿'; resume.onclick = async () => { await restoreDraft(); await persist().catch(storageError); drawer.close(); };
-  const list = document.createElement('div');
+  const heading = document.createElement('div'); heading.className = 'task-drawer-heading';
+  const title = document.createElement('h2'); title.id = 'taskDrawerTitle'; title.textContent = '最近创作';
+  const drawerCount = document.createElement('span'); drawerCount.className = 'task-drawer-count';
+  heading.append(title, drawerCount, close); drawer.setAttribute('aria-labelledby', title.id);
+  const actions = document.createElement('div'); actions.className = 'task-drawer-actions'; actions.append(next, resume);
+  const list = document.createElement('div'); list.className = 'task-gallery';
   const notice = document.createElement('div'); notice.className = 'task-notice'; notice.setAttribute('role', 'status');
-  drawer.append(close, next, resume, list); document.body.append(capsule, drawer, notice);
-  capsule.onclick = () => { if (!restored || !owner()) return; returnFocus = document.activeElement; unseen = 0; render(); drawer.showModal(); };
+  drawer.append(heading, actions, list); document.body.append(capsule, drawer, notice);
+  capsule.onclick = () => { if (!restored || !owner()) return; returnFocus = document.activeElement; unseen = 0; render(); capsule.setAttribute('aria-expanded', 'true'); drawer.showModal(); };
   drawer.addEventListener('cancel', () => { revision++; });
-  drawer.addEventListener('close', () => { revision++; if (restored && owner()) (returnFocus?.isConnected ? returnFocus : capsule).focus(); });
+  drawer.addEventListener('close', () => { revision++; capsule.setAttribute('aria-expanded', 'false'); if (restored && owner()) (returnFocus?.isConnected ? returnFocus : capsule).focus(); });
   function storageError(e) { ns.setStatus(`工作区保存失败，不能安全提交：${e.message || e}`, 'error'); }
   const detailNext = next.cloneNode(true); detailNext.id = 'detailNewDraftBtn'; ns.els.runBtn.after(detailNext);
   detailNext.onclick = () => next.onclick();
@@ -107,28 +112,63 @@
     draft = { fields: specs, prompt: '', references: [], edit: null };
     ns.resetEditState?.(); await restoreDraft(); await persist().catch(storageError); drawer.close();
   };
+  function promptPreview(value) {
+    const letters = Array.from(String(value || '未命名创作').replace(/\s+/g, ' ').trim());
+    return letters.slice(0, 15).join('') + (letters.length > 15 ? '…' : '');
+  }
+  function taskLabel(task) {
+    if (task.active) return ['submission_unknown', 'unknown'].includes(task.status) ? '状态待确认' : '生成中';
+    return task.status === 'partial_success' ? '部分完成' : task.imageUrls?.length ? '已完成' : '未生成图片';
+  }
+  function taskPicture(task, compact = false) {
+    const visual = document.createElement('span'); visual.className = 'task-picture';
+    const url = !task.assetsDeleted && task.imageUrls?.find(value => value.startsWith('/api/stored-images/'));
+    if (url) {
+      const image = document.createElement('img'); image.src = url; image.alt = ''; image.loading = compact ? 'eager' : 'lazy'; image.decoding = 'async';
+      image.addEventListener('error', () => { image.remove(); visual.classList.add('is-unavailable'); }, { once: true });
+      visual.append(image);
+    } else {
+      visual.classList.add(task.active ? 'is-generating' : 'is-empty');
+    }
+    // Decorative only; prompt and task status remain accessible on the containing button.
+    const placeholder = document.createElement('span'); placeholder.className = 'task-picture-placeholder'; placeholder.setAttribute('aria-hidden', 'true');
+    placeholder.innerHTML = '<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="6" width="22" height="20" rx="5" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="m6 23 7-7 5 5 4-4 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    visual.append(placeholder); return visual;
+  }
   function render() {
     capsule.hidden = !restored || !owner();
     detailNext.hidden = !selected || !restored; detailNext.disabled = ns.state.isBusy;
-    capsule.textContent = `任务 ${activeCount}/${limit}${unseen ? ` · ${unseen} 条新完成` : ''}`;
+    const tasks = [...registry.entries()].sort((a, b) => Date.parse(b[1].createdAt || '') - Date.parse(a[1].createdAt || ''));
+    const recent = tasks.slice(0, 3), latest = recent[0]?.[1];
+    const stack = document.createElement('span'); stack.className = 'task-capsule-stack'; stack.setAttribute('aria-hidden', 'true');
+    for (const [, task] of recent.slice().reverse()) stack.append(taskPicture(task, true));
+    if (!latest) stack.append(taskPicture({} , true));
+    const caption = document.createElement('span'); caption.className = 'task-capsule-caption'; caption.textContent = latest ? promptPreview(latest.prompt || latest.settings?.prompt) : '最近创作';
+    const arrow = document.createElement('span'); arrow.className = 'task-capsule-arrow'; arrow.textContent = '↗'; arrow.setAttribute('aria-hidden', 'true');
+    capsule.replaceChildren(stack, caption, arrow); capsule.classList.toggle('has-active', activeCount > 0);
+    capsule.setAttribute('aria-label', `打开最近任务，${activeCount} 个进行中${unseen ? `，${unseen} 个新完成` : ''}`);
+    if (activeCount || unseen) {
+      const badge = document.createElement('span'); badge.className = `task-capsule-badge${unseen ? ' is-unread' : ''}`; badge.textContent = String(unseen || activeCount); badge.setAttribute('aria-hidden', 'true'); capsule.append(badge);
+    }
+    drawerCount.textContent = String(tasks.length); drawerCount.setAttribute('aria-label', `${tasks.length} 个任务`);
     const focused = list.contains(document.activeElement) ? document.activeElement.dataset.actionKey : '';
-    list.replaceChildren();
-    next.disabled = ns.state.isBusy;
-    for (const [id, task] of registry) {
-      const card = document.createElement('article'); card.className = 'task-card';
-      const open = document.createElement('button');
-      open.dataset.actionKey = `open:${id}`;
-      const labels = { completed: '已完成', partial_success: '部分成功', processing: '生成中', submitting: '提交中', submission_unknown: '提交状态未知', failed: '失败', pending: '等待中' };
-      const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(task.createdAt)) / 1000));
-      open.textContent = `${task.prompt || task.settings?.prompt || '请求'} · ${labels[task.status] || '需要关注'} · ${task.completedCount || 0}/${task.requestedCount || 1} · ${Number.isFinite(seconds) ? `已用时 ${Math.floor(seconds / 60)}分${seconds % 60}秒` : ''}`;
-      open.onclick = () => openTask(id);
-      const copy = document.createElement('button'); copy.textContent = '复制为新请求（含输入）';
-      copy.disabled = ns.state.isBusy; copy.dataset.actionKey = `copy:${id}`;
-      const url = task.imageUrls?.find(url => url.startsWith('/api/stored-images/'));
-      if (url && !task.assetsDeleted) { const img = document.createElement('img'); img.src = url; img.alt = '任务缩略图'; img.width = 72; img.height = 72; card.append(img); }
-      copy.onclick = () => copyTask(id);
+    list.replaceChildren(); next.disabled = ns.state.isBusy;
+    for (const [id, task] of tasks) {
+      const card = document.createElement('article'); card.className = 'task-card'; card.classList.toggle('is-selected', selected === id);
+      const open = document.createElement('button'); open.className = 'task-card-open'; open.dataset.actionKey = `open:${id}`;
+      const prompt = task.prompt || task.settings?.prompt || '未命名创作';
+      open.setAttribute('aria-label', `${promptPreview(prompt)}，${taskLabel(task)}，查看详情`);
+      const visual = taskPicture(task);
+      const status = document.createElement('span'); status.className = `task-card-status${task.active ? ' is-active' : ''}${task.status === 'submission_unknown' ? ' is-unknown' : ''}`; status.setAttribute('aria-label', taskLabel(task)); status.title = taskLabel(task);
+      visual.append(status);
+      if (task.requestedCount > 1) { const count = document.createElement('span'); count.className = 'task-card-count'; count.textContent = `${task.completedCount || 0}/${task.requestedCount}`; visual.append(count); }
+      const label = document.createElement('span'); label.className = 'task-card-prompt'; label.textContent = promptPreview(prompt);
+      open.append(visual, label); open.onclick = () => openTask(id);
+      const copy = document.createElement('button'); copy.className = 'task-card-copy'; copy.textContent = '↗'; copy.setAttribute('aria-label', '复制为新请求（含输入）'); copy.title = '复制为新请求（含输入）';
+      copy.disabled = ns.state.isBusy; copy.dataset.actionKey = `copy:${id}`; copy.onclick = () => copyTask(id);
       card.append(open, copy); list.append(card);
     }
+    if (!tasks.length) { const empty = document.createElement('p'); empty.className = 'task-gallery-empty'; empty.textContent = '你的创作会出现在这里'; list.append(empty); }
     if (focused) [...list.querySelectorAll('button')].find(el => el.dataset.actionKey === focused)?.focus({ preventScroll: true });
   }
   function showSnapshot(task) {
@@ -260,7 +300,7 @@
         const prior = registry.get(id);
         registry.set(id, adapt(task, prior));
         if (prior?.active && !task.active) {
-          unseen++; const button = document.createElement('button'); button.textContent = `任务已结束：${task.prompt.slice(0, 40)} · 查看`;
+          unseen++; const button = document.createElement('button'); button.textContent = `${promptPreview(task.prompt)} · 查看`;
           button.onclick = () => { if (current(c)) void openTask(id); }; notice.replaceChildren(button);
           ns.loadMe(); ns.loadMyLogs();
         }
