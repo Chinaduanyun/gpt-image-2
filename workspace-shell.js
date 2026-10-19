@@ -121,6 +121,7 @@
     }
 
     updateViewDom(name);
+    if (name === 'edit') void window.ImageGen?.prepareWorkspaceEdit?.();
     if (updateUrl) updateHash(name, replaceHash);
     if (focus) focusView(name);
   }

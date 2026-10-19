@@ -54,6 +54,13 @@ const { chromium } = require('playwright');
     await page.locator('#prompt').fill('first overlapping request');
     await page.locator('#runBtn').dblclick();
     await page.waitForFunction(() => !ImageGen.state.isBusy && ImageGen.state.result?.taskId);
+    // An accepted background task must not block draft editing or cause a new request.
+    await page.locator('[data-preview-nav="edit"]').click();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && !ImageGen.els.editUploadBtn.disabled);
+    await page.locator('#editUploadInput').setInputFiles({ name: 'background.png', mimeType: 'image/png', buffer: png });
+    await page.waitForFunction(() => ImageGen.editHasImage());
+    assert.equal(calls, 1, 'opening/uploading an editor draft never submits');
+    await page.locator('[data-preview-nav="workspace"]').click();
     await page.locator('#taskCapsule').click(); await page.locator('#newDraftBtn').click();
     await page.locator('#prompt').fill('second overlapping request');
     await page.locator('#runBtn').click();
@@ -102,6 +109,119 @@ const { chromium } = require('playwright');
     assert.equal(await page.locator('#prompt').inputValue(), 'first overlapping request');
     assert.equal(await page.locator('#prompt').getAttribute('readonly'), '');
     assert.equal(await page.locator('#referenceUploadBtn').isDisabled(), true);
+    // RED on baseline: selected completed task kept upload disabled forever.
+    await page.locator('[data-preview-nav="edit"]').click();
+    await page.waitForFunction(() => !ImageGen.els.editUploadBtn.disabled);
+    assert.equal(await page.locator('#prompt').inputValue(), 'durable unfinished draft');
+    assert.equal(await page.evaluate(() => ImageGen.state.referenceImages.length), 1);
+    await page.locator('#editUploadInput').setInputFiles({ name: 'completed.png', mimeType: 'image/png', buffer: png });
+    await page.waitForFunction(() => ImageGen.editHasImage());
+    await page.locator('#editPrompt').fill('unfinished editor instructions');
+    await page.evaluate(() => ImageGen.saveWorkspaceDraft());
+    const openFirst = async () => {
+      await page.locator('[data-preview-nav="workspace"]').click();
+      await page.locator('#taskCapsule').click();
+      await firstCard.locator('.task-card-open').click();
+      await page.waitForFunction(() => ImageGen.isWorkspaceReadOnly());
+    };
+    await openFirst();
+    // Real result Edit routes through the same guarded transition and decodes an archived image.
+    await page.locator('[data-edit-url]').first().click();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && ImageGen.state.edit.sourceUrl.startsWith('/api/stored-images/') && ImageGen.editHasImage());
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'unfinished editor instructions');
+    assert.ok(await page.evaluate(() => ImageGen.composeEditedImage().dataUrl.startsWith('data:image/')));
+    assert.equal(calls, 2);
+    await openFirst();
+    // Hold the actual IndexedDB put completion: editor inputs must not accept unsaved typing.
+    await page.locator('[data-preview-nav="edit"]').click();
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready());
+    await page.locator('#editPrompt').fill('durable text before delayed transaction');
+    await page.evaluate(() => ImageGen.saveWorkspaceDraft());
+    await openFirst();
+    await page.evaluate(() => {
+      const original = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = original.apply(this, args);
+        if (this.name === 'accounts') {
+          IDBObjectStore.prototype.put = original;
+          const transaction = this.transaction;
+          Object.defineProperty(transaction, 'oncomplete', { configurable: true, set(callback) {
+            transaction.addEventListener('complete', () => {
+              window.releaseWorkspacePut = () => callback();
+            }, { once: true });
+          } });
+        }
+        return request;
+      };
+      void ImageGen.prepareWorkspaceEdit();
+    });
+    await page.waitForFunction(() => typeof window.releaseWorkspacePut === 'function');
+    for (const id of ['editPrompt', 'editAnnotationText', 'editAppendToggle']) assert.equal(await page.locator(`#${id}`).isDisabled(), true, id);
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'durable text before delayed transaction');
+    await page.evaluate(() => { window.releaseWorkspacePut(); delete window.releaseWorkspacePut; });
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready());
+    // Once enabled, real UI typing must save and survive reload after the transaction finishes.
+    await page.locator('[data-preview-nav="edit"]').click();
+    await page.locator('#editPrompt').fill('durable text after delayed transaction');
+    await page.evaluate(() => ImageGen.flushWorkspace());
+    await page.reload();
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready() && ImageGen.editHasImage());
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'durable text after delayed transaction');
+    await page.locator('#editPrompt').fill('unfinished editor instructions');
+    await page.evaluate(() => ImageGen.flushWorkspace());
+    await openFirst();
+    // Actual IndexedDB write failure must not unlock a selected snapshot or lose its saved draft.
+    assert.equal(await page.evaluate(async () => {
+      const original = indexedDB.open;
+      indexedDB.open = () => { throw new Error('QA storage unavailable'); };
+      try { return await ImageGen.prepareWorkspaceEdit(); }
+      finally { indexedDB.open = original; }
+    }), false);
+    assert.equal(await page.evaluate(() => ImageGen.isWorkspaceReadOnly()), true);
+    assert.equal(await page.locator('#prompt').inputValue(), 'first overlapping request');
+    assert.match(await page.locator('#editStatus').textContent(), /QA storage unavailable/);
+    // Slow saved-source hydration + duplicate result/nav entry must not cancel the new image.
+    let releaseImage; const imageGate = new Promise(resolve => { releaseImage = resolve; });
+    let sawImage; const imageRequested = new Promise(resolve => { sawImage = resolve; });
+    await page.route('**/api/stored-images/*', async route => { sawImage(); await imageGate; await route.continue(); });
+    await page.locator('[data-edit-url]').first().click();
+    await imageRequested;
+    await page.locator('[data-preview-nav="edit"]').click();
+    await page.evaluate(() => { void ImageGen.prepareWorkspaceEdit(); });
+    releaseImage();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && ImageGen.editHasImage() && !ImageGen.state.edit.imageLoading);
+    assert.equal(await page.evaluate(() => ImageGen.state.edit.sourceKind), 'stored');
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'unfinished editor instructions');
+    await page.unroute('**/api/stored-images/*');
+    await page.evaluate(() => ImageGen.flushWorkspace());
+    await openFirst();
+    // Reload directly at #edit while IndexedDB still has selected: resume, not task snapshot.
+    await page.evaluate(() => history.replaceState(null, '', '#edit'));
+    await page.reload();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && !ImageGen.els.editUploadBtn.disabled && ImageGen.editHasImage());
+    assert.equal(await page.locator('#prompt').inputValue(), 'durable unfinished draft');
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'unfinished editor instructions');
+    assert.equal(await page.evaluate(() => ImageGen.state.referenceImages.length), 1);
+    await openFirst();
+    await page.locator('[data-preview-nav="library"]').click();
+    await page.locator('.history-thumb').first().click();
+    await page.locator('#previewHistoryDetailContent [data-history-action="edit"]').click();
+    await page.waitForFunction(() => location.hash === '#edit' && !ImageGen.isWorkspaceReadOnly() && ImageGen.editHasImage());
+    assert.equal(await page.locator('#previewHistoryDialog').evaluate(el => el.open), false);
+    assert.equal(calls, 2, 'nav, upload, result and library detail Edit do not issue paid requests');
+    // Authoritative capacity disables submission, not editing; reject with useful editor feedback.
+    await page.route('**/api/me/tasks', async route => {
+      const response = await route.fetch(); const body = await response.json();
+      await route.fulfill({ response, json: { ...body, activeCount: 3, limit: 3 } });
+    });
+    await page.evaluate(() => ImageGen.recoverPendingGeneration());
+    assert.equal(await page.locator('#editChangeImageBtn').isDisabled(), false);
+    await page.locator('#editSubmitBtn').click();
+    assert.match(await page.locator('#editStatus').textContent(), /已达上限 3/);
+    assert.equal(calls, 2);
+    await page.unroute('**/api/me/tasks');
+    await page.evaluate(() => ImageGen.recoverPendingGeneration());
+    await openFirst();
     await page.locator('#detailNewDraftBtn').click();
     assert.equal(await page.locator('#prompt').inputValue(), '');
     assert.equal(await page.locator('.result-thumb img').count(), 0);
@@ -160,12 +280,78 @@ const { chromium } = require('playwright');
     await page.reload();
     await page.waitForFunction(() => ImageGen.state.edit?.image && !ImageGen.state.edit.imageLoading && !ImageGen.state.edit.referencesLoading);
     assert.deepEqual(await page.evaluate(() => ({ tool: ImageGen.state.edit.tool, color: ImageGen.state.edit.color, width: ImageGen.state.edit.widthTier, model: ImageGen.els.editModel.value, ratio: ImageGen.els.editAspectRatio.value, resolution: ImageGen.els.editResolution.value })), { tool: 'rect', color: '#ef4444', width: 2, model: 'gpt-image-2-official', ratio: '16:9', resolution: '2k' });
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready());
+    // A missing optional saved editor asset must retain the draft, not strand all task actions.
+    const savedWorkspace = async () => page.evaluate(async () => {
+      await ImageGen.flushWorkspace();
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('imageGenWorkspace', 1);
+        request.onsuccess = () => {
+          const db = request.result, tx = db.transaction('accounts', 'readonly');
+          const read = tx.objectStore('accounts').get('workspace:test@staging.invalid');
+          read.onsuccess = () => resolve(read.result); read.onerror = () => reject(read.error);
+          tx.oncomplete = () => db.close();
+        };
+      });
+    });
+    await page.evaluate(async () => {
+      ImageGen.state.edit.sourceUrl = '/api/stored-images/missing-qa.png';
+      ImageGen.state.edit.strokes = [{ tool: 'brush', points: [{ x: 5, y: 6 }], color: '#ef4444', width: 2 }];
+      ImageGen.state.edit.referenceImages = [{ id: 'retained-ref', value: 'data:image/png;base64,AAAA', name: 'retained' }];
+      ImageGen.els.editPrompt.value = 'retain missing source instructions';
+      await ImageGen.saveWorkspaceDraft();
+    });
+    const missingDraft = (await savedWorkspace()).draft;
+    await page.reload();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-workspace-draft-recovery]')].some(el => !el.hidden));
+    assert.equal(await page.locator('[data-retry-workspace-draft]').first().isDisabled(), false);
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft, '404 startup must not persist a blank editor over saved source/strokes/refs');
+    await page.locator('#taskCapsule').click();
+    await page.locator('.task-card').first().locator('.task-card-open').click();
+    await page.waitForFunction(() => ImageGen.state.result?.taskId);
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft, 'task navigation retains failed draft');
+    // The original asset URL can recover after a transient server failure; retry retains all metadata.
+    await page.route('**/api/stored-images/missing-qa.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+    await page.locator('[data-retry-workspace-draft]').first().click();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && ImageGen.editHasImage());
+    assert.equal(await page.locator('#editPrompt').inputValue(), 'retain missing source instructions');
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft);
+    await page.unroute('**/api/stored-images/missing-qa.png');
+    await page.route('**/api/stored-images/missing-qa.png', route => route.fulfill({ status: 503, body: 'QA temporary unavailable' }));
+    await openFirst();
+    await page.reload();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-workspace-draft-recovery]')].some(el => !el.hidden));
+    assert.equal(await page.evaluate(() => ImageGen.state.result?.prompt), 'first overlapping request', 'startup transient failure restores valid selected task');
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft);
+    await page.unroute('**/api/stored-images/missing-qa.png');
+    await page.route('**/api/stored-images/missing-qa.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+    await page.locator('[data-retry-workspace-draft]').first().click();
+    await page.waitForFunction(() => !ImageGen.isWorkspaceReadOnly() && ImageGen.editHasImage());
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft);
+    await page.unroute('**/api/stored-images/missing-qa.png');
+    await page.reload();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-workspace-draft-recovery]')].some(el => !el.hidden));
+    // Account switch must not capture partial hydration or write another account into this record.
+    await page.locator('#logoutBtn').click(); await page.locator('#loginPanel').waitFor({ state: 'visible' });
+    await page.locator('#emailInput').fill('other@staging.invalid'); await page.locator('#loginBtn').click();
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready());
+    await page.locator('#prompt').fill('other account draft'); await page.evaluate(() => ImageGen.saveWorkspaceDraft());
+    assert.deepEqual((await savedWorkspace()).draft, missingDraft, 'account switch preserves failed first-account draft');
+    await page.locator('#logoutBtn').click(); await page.locator('#loginPanel').waitFor({ state: 'visible' });
+    await page.locator('#emailInput').fill('test@staging.invalid'); await page.locator('#loginBtn').click();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-workspace-draft-recovery]')].some(el => !el.hidden));
+    await page.locator('[data-replace-workspace-draft]').first().click();
+    await page.waitForFunction(() => ImageGen.workspaceSubmit.ready());
+    assert.ok(dialogs.some(message => message.includes('旧草稿底图尚未恢复')));
+    assert.equal((await savedWorkspace()).draft.edit, null, 'only explicit confirmed new draft discards failed editor');
+    await page.locator('#taskCapsule').click(); assert.equal(await page.locator('.task-card').count(), 3); await page.keyboard.press('Escape');
+    assert.equal(calls, 3, '404/retry/account switch/new draft never submit or replay provider requests');
     await page.locator('#logoutBtn').click();
     await page.locator('#loginPanel').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#taskCapsule').isVisible(), false);
     assert.equal(await page.locator('.task-notice').textContent(), '');
     assert.equal(await page.locator('#taskDrawer').evaluate(el => el.open), false);
     assert.deepEqual(errors, []);
-    console.log('workspace browser behavior passed: overlap, duplicate click, draft/ref reload, non-stealing completion, feed cards, desktop/mobile Escape focus');
+    console.log('workspace browser behavior passed: overlap/idempotency, selected/background edit nav/upload, result/library Edit, real canvas/archive, direct #edit reload, draft preservation, slow duplicate entry, IndexedDB failure, capacity feedback, task readonly/feed cards, desktop/mobile Escape focus, startup 404/503 recovery, saved metadata retention, account isolation and confirmed discard');
   } finally { await browser?.close(); app.kill(); await new Promise((resolve) => provider.close(resolve)); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -36,7 +36,7 @@
       edit: edit ? { ...edit, image: null, referencesLoading: false, imageLoading: false, strokes: structuredClone(edit.strokes), referenceImages: structuredClone(edit.referenceImages) } : null,
       editPrompt: ns.els.editPrompt?.value || '', editorFields: Object.fromEntries(editorFields.filter(k => ns.els[k]).map(k => [k, k === 'editAppendToggle' ? ns.els[k].checked : ns.els[k].value])) };
   }
-  let draft = null, hydrating = null, restoring = false;
+  let draft = null, hydrating = null, restoring = false, restoration = null, editPreparation = null, draftHydrationError = null;
   function persist() {
     const email = owner();
     if (!email || !restored) return Promise.reject(new Error('工作区尚未恢复，请稍后重试。'));
@@ -45,8 +45,9 @@
     writeChain = next;
     return next;
   }
-  async function restoreDraft() {
-    const hydration = {}; hydrating = hydration;
+  async function restoreDraft({ strict = false } = {}) {
+    let finish, assetFailure = false;
+    const hydration = { context: context(), promise: new Promise(resolve => { finish = resolve; }) }; hydrating = hydration;
     ns.updatePendingUi();
     try {
     ns.invalidateReferenceReads?.();
@@ -59,28 +60,39 @@
       ns.resetEditState?.();
       if (ns.els.editModel) ns.els.editModel.value = draft.editorFields?.editModel || ns.els.model.value;
       for (const [k, value] of Object.entries(draft.editorFields || {})) if (ns.els[k]) { if (k === 'editAppendToggle') ns.els[k].checked = value; else ns.els[k].value = value; }
+      if (ns.els.editPrompt) ns.els.editPrompt.value = draft.editPrompt || '';
       if (draft.edit?.sourceUrl) {
         ns.state.edit = { ...structuredClone(draft.edit), image: null, referencesLoading: false, imageLoading: false };
-        ns.els.editPrompt.value = draft.editPrompt || '';
         const edit = ns.state.edit;
         if (edit.sourceUrl) {
           let source = edit.sourceUrl;
           if (!source.startsWith('data:image/')) {
             try { source = (await fetchInput({ url: source, fileName: source.split('/').pop() }, c)).value; }
-            catch { if (current(c) && revision === rev) ns.resetEditState?.(); source = ''; }
+            catch (error) { if (strict) { assetFailure = true; throw error; } if (current(c) && revision === rev) ns.resetEditState?.(); source = ''; }
           }
           if (!current(c) || revision !== rev) return;
-          await new Promise(resolve => {
+          await new Promise((resolve, reject) => {
             const image = new Image();
             image.onload = () => { if (current(c) && revision === rev && ns.state.edit === edit) { edit.image = image; edit.imageLoading = false; edit.referencesLoading = false; ns.renderEditor?.(); } resolve(); };
-            image.onerror = () => { if (current(c) && revision === rev && ns.state.edit === edit) ns.resetEditState?.(); resolve(); };
+            image.onerror = () => { if (strict) { assetFailure = true; return reject(new Error('草稿底图载入失败，请重试。')); } if (current(c) && revision === rev && ns.state.edit === edit) ns.resetEditState?.(); resolve(); };
             image.src = source;
           });
         }
       }
     }
+    if (!current(c) || revision !== rev) return;
+    draftHydrationError = null;
     ns.updatePromptStats(); ns.updateModelUi(); ns.renderReferences(); ns.renderEditor?.();
+    return true;
+    } catch (error) {
+      if (assetFailure && current(hydration.context)) {
+        draftHydrationError = error;
+        ns.renderEditor?.();
+        ns.setStatus('草稿底图恢复失败，原草稿已保留。请重试，或明确选择新建草稿。', 'error');
+      }
+      throw error;
     } finally {
+      finish();
       if (hydrating === hydration) { hydrating = null; ns.updatePendingUi(); render(); }
     }
   }
@@ -90,7 +102,7 @@
   let returnFocus = null;
   const close = document.createElement('button'); close.textContent = '×'; close.className = 'task-drawer-close'; close.setAttribute('aria-label', '关闭任务列表'); close.onclick = () => drawer.close();
   const next = document.createElement('button'); next.textContent = '+ 新建下一次'; next.id = 'newDraftBtn';
-  const resume = document.createElement('button'); resume.textContent = '返回未完成草稿'; resume.onclick = async () => { await restoreDraft(); await persist().catch(storageError); drawer.close(); };
+  const resume = document.createElement('button'); resume.textContent = '返回未完成草稿'; resume.onclick = async () => { if (await ns.prepareWorkspaceEdit()) drawer.close(); };
   const heading = document.createElement('div'); heading.className = 'task-drawer-heading';
   const title = document.createElement('h2'); title.id = 'taskDrawerTitle'; title.textContent = '最近创作';
   const drawerCount = document.createElement('span'); drawerCount.className = 'task-drawer-count';
@@ -106,13 +118,35 @@
   const detailNext = next.cloneNode(true); detailNext.id = 'detailNewDraftBtn'; ns.els.runBtn.after(detailNext);
   detailNext.onclick = () => next.onclick();
   next.onclick = async () => {
-    if (ns.state.isBusy) return;
-    if (!selected) draft = captureDraft();
+    if (ns.state.isBusy || restoring || hydrating || editPreparation) return;
+    if (!selected && !draftHydrationError) draft = captureDraft();
     if (selected && !registry.get(selected)?.taskId && !registry.get(selected)?.batchId && !window.confirm('提交状态未知。原请求和原标识将继续保留，不会重发。确认另开草稿？')) return;
+    if (!confirmDraftReplacement()) return;
     const specs = draft?.fields || captureDraft().fields;
+    draftHydrationError = null;
     draft = { fields: specs, prompt: '', references: [], edit: null };
     ns.resetEditState?.(); await restoreDraft(); await persist().catch(storageError); drawer.close();
   };
+  const recoveryPanels = ['status', 'editEmptyStatus'].filter(name => ns.els[name]).map(name => {
+    const panel = document.createElement('div'); panel.dataset.workspaceDraftRecovery = 'true'; panel.setAttribute('role', 'alert');
+    const message = document.createElement('p');
+    const retry = document.createElement('button'); retry.type = 'button'; retry.dataset.retryWorkspaceDraft = 'true'; retry.textContent = '重试恢复草稿';
+    retry.onclick = () => ns.prepareWorkspaceEdit();
+    const discard = document.createElement('button'); discard.type = 'button'; discard.dataset.replaceWorkspaceDraft = 'true'; discard.textContent = '放弃旧草稿并新建';
+    discard.onclick = () => next.onclick();
+    panel.append(message, retry, discard); ns.els[name].after(panel);
+    return { panel, message, retry, discard };
+  });
+  function renderDraftRecovery() {
+    for (const { panel, message, retry, discard } of recoveryPanels) {
+      panel.hidden = !draftHydrationError || !restored || !owner();
+      message.textContent = draftHydrationError ? `草稿底图恢复失败：${draftHydrationError.message || draftHydrationError}。原草稿及参考图已保留；可重试、查看任务，或放弃旧草稿后新建。` : '';
+      retry.disabled = discard.disabled = ns.state.isBusy || restoring || Boolean(hydrating) || Boolean(editPreparation);
+    }
+  }
+  function confirmDraftReplacement() {
+    return !draftHydrationError || window.confirm('旧草稿底图尚未恢复。此操作会放弃旧草稿（含标注和参考图），任务记录仍保留。继续？');
+  }
   function promptPreview(value) {
     const letters = Array.from(String(value || '未命名创作').replace(/\s+/g, ' ').trim());
     return letters.slice(0, 15).join('') + (letters.length > 15 ? '…' : '');
@@ -143,6 +177,7 @@
   let capsuleSignature = '', drawerSignature = '';
   const taskCards = new Map();
   function render() {
+    renderDraftRecovery();
     capsule.hidden = !restored || !owner();
     detailNext.hidden = !selected || !restored; detailNext.disabled = ns.state.isBusy;
     const tasks = [...registry.entries()].sort((a, b) => Date.parse(b[1].createdAt || '') - Date.parse(a[1].createdAt || ''));
@@ -212,8 +247,8 @@
     ns.state.referenceImages = []; ns.renderReferences(); ns.updatePromptStats();
   }
   async function openTask(id) {
-    if (!restored || ns.state.isBusy || !registry.has(id)) return;
-    if (!selected) draft = captureDraft();
+    if (!restored || restoring || hydrating || editPreparation || ns.state.isBusy || !registry.has(id)) return;
+    if (!selected && !draftHydrationError) draft = captureDraft();
     ns.invalidateReferenceReads?.();
     selected = id; revision++; ns.state.result = registry.get(id); showSnapshot(ns.state.result);
     ns.renderResult({ focus: false }); ns.updatePendingUi(); await persist().catch(storageError); drawer.close();
@@ -241,7 +276,8 @@
     return files;
   }
   async function copyTask(id) {
-    if (ns.state.isBusy) return;
+    if (ns.state.isBusy || restoring || hydrating || editPreparation) return;
+    if (!confirmDraftReplacement()) return;
     const referenceGeneration = ns.invalidateReferenceReads();
     const c = context(), op = ++revision;
     const valid = () => current(c) && revision === op && ns.isReferenceGenerationCurrent(referenceGeneration) && !ns.state.isBusy;
@@ -258,6 +294,7 @@
       }
       if (!valid()) return;
       const settings = task.settings || {};
+      draftHydrationError = null;
       draft = { prompt: task.prompt || '', fields: { model: task.model || settings.model, aspectRatio: settings.size, resolution: settings.resolution, quality: settings.quality, imageCount: settings.n, outputFormat: settings.output_format, outputCompression: settings.output_compression }, references, edit: null };
       await restoreDraft();
       if (!current(c)) return;
@@ -266,12 +303,57 @@
   }
   const oldUpdate = ns.updatePendingUi;
   ns.hasPendingGeneration = () => Boolean(selected);
+  ns.isWorkspaceEditLocked = () => !restored || restoring || Boolean(selected) || Boolean(hydrating) || Boolean(editPreparation) || Boolean(draftHydrationError);
+  // Editing resumes the saved composer/editor draft, never the selected task snapshot.
+  // All entry points share this operation so a late tab activation cannot reset a new image.
+  ns.prepareWorkspaceEdit = () => {
+    if (editPreparation && current(editPreparation.context)) return editPreparation.promise;
+    const c = context();
+    const operation = { context: c };
+    editPreparation = operation;
+    operation.promise = Promise.resolve().then(async () => {
+      if (restoring && restoration) await restoration;
+      if (hydrating) await hydrating.promise;
+      if (!current(c)) return false;
+      if (!restored || restoring) throw new Error('工作区尚未恢复，请稍后重试。');
+      if (!selected && !draftHydrationError) return true;
+      if (ns.state.isBusy || ns.state.edit?.imageLoading || ns.state.edit?.referencesLoading) {
+        throw new Error('正在提交或读取图片，请稍候再进入编辑。');
+      }
+      const view = selected, op = revision + 1, priorHydrationError = draftHydrationError;
+      try {
+        if (!await restoreDraft({ strict: true }) || !current(c) || revision !== op) throw new Error('草稿已变化，请重新进入编辑。');
+        await persist();
+        if (!current(c)) return false;
+        if (revision !== op || selected) throw new Error('草稿已变化，请重新进入编辑。');
+        return true;
+      } catch (error) {
+        if (current(c) && priorHydrationError) draftHydrationError = priorHydrationError;
+        if (current(c) && !selected) {
+          selected = view;
+          ns.state.result = registry.get(view) || null;
+          if (ns.state.result) { showSnapshot(ns.state.result); ns.renderResult({ focus: false }); }
+        }
+        throw error;
+      }
+    }).catch(error => {
+      if (current(c)) {
+        const message = `无法安全进入编辑：${error.message || error}`;
+        ns.setEditStatus?.(message, 'error'); ns.setEditEmptyStatus?.(message, 'error');
+      }
+      return false;
+    }).finally(() => {
+      if (editPreparation === operation) { editPreparation = null; ns.updatePendingUi(); }
+    });
+    ns.updatePendingUi();
+    return operation.promise;
+  };
   ns.applyWorkspaceLocks = () => {
-    const locked = ns.state.isBusy || Boolean(selected) || Boolean(hydrating) || restoring;
+    const locked = ns.state.isBusy || ns.isWorkspaceEditLocked();
     ns.els.runBtn.disabled = locked || activeCount >= limit || !restored || !ns.estimatePrice().ok;
     ns.els.runBtn.textContent = selected ? '查看中 · 请新建下一次' : activeCount >= limit ? `进行中请求已达上限 ${limit}` : ns.state.isBusy ? '提交中…' : '生成图片';
     ns.els.model.title = selected ? '已提交任务的模式不可修改，点击“新建下一次”继续生成。' : '';
-    ns.els.prompt.readOnly = Boolean(selected);
+    ns.els.prompt.readOnly = ns.isWorkspaceReadOnly();
     for (const field of fields) ns.els[field].disabled = locked;
     const countUnsupported = !ns.isOfficialModel() && !ns.isQuickBatchEnabled();
     if (countUnsupported && !selected) ns.els.imageCount.value = '1';
@@ -295,7 +377,8 @@
     return useResults();
   };
   ns.workspaceSubmit = {
-    ready: () => restored && !restoring && !selected && !hydrating && activeCount < limit,
+    ready: () => !ns.isWorkspaceEditLocked() && activeCount < limit,
+    blockedReason: () => draftHydrationError ? '草稿底图尚未恢复，请重试恢复，或放弃旧草稿后新建。' : activeCount >= limit ? `进行中请求已达上限 ${limit}，可继续编辑草稿，待任务结束后再提交。` : '工作区尚未准备好，请稍候再提交。',
     capture: () => { revision++; draft = captureDraft(); },
     save: async (task) => { registry.set(task.id, { ...task, recovery: registry.get(task.id)?.recovery || structuredClone(task) }); await persist(); },
     remove: async (id) => { registry.delete(id); await persist(); },
@@ -366,10 +449,10 @@
   }
   const reset = ns.resetAccountRuntime;
   ns.resetAccountRuntime = () => {
-    if (owner() && restored) { if (!selected) draft = captureDraft(); persist().catch(() => {}); }
-    clearTimeout(timer); restored = false; registry = new Map(); selected = ''; draft = null; activeCount = 0; unseen = 0; revision++;
+    if (owner() && restored) { if (!selected && !hydrating && !restoring && !editPreparation && !draftHydrationError) draft = captureDraft(); persist().catch(() => {}); }
+    clearTimeout(timer); restored = false; registry = new Map(); selected = ''; draft = null; draftHydrationError = null; activeCount = 0; unseen = 0; revision++;
     capsuleSignature = ''; drawerSignature = ''; taskCards.clear(); capsule.replaceChildren(); list.replaceChildren();
-    hydrating = null; restoring = false; runner = null; notice.replaceChildren(); drawer.close(); capsule.hidden = true; detailNext.hidden = true;
+    hydrating = null; restoring = false; restoration = null; editPreparation = null; runner = null; notice.replaceChildren(); drawer.close(); capsule.hidden = true; detailNext.hidden = true;
     for (const id of ['previewHistoryDetailContent', 'previewHistoryDetailGallery', 'previewHistoryDialogSubtitle']) document.getElementById(id)?.replaceChildren();
     const detailImage = document.getElementById('previewHistoryDetailImage');
     if (detailImage) { detailImage.removeAttribute('src'); detailImage.hidden = true; }
@@ -379,7 +462,7 @@
   };
   ns.restoreStoredResult = () => {}; // Task views never hydrate the composer.
   const legacyRestore = ns.restorePendingRequest;
-  ns.restorePendingRequest = async () => {
+  async function restoreWorkspace() {
     const c = context();
     restoring = true; ns.updatePendingUi();
     try {
@@ -400,7 +483,8 @@
       }
       ns.state.pendingRequest = null; restored = true;
       const view = selected;
-      await restoreDraft();
+      try { await restoreDraft({ strict: true }); }
+      catch (error) { if (!current(c)) return; if (!draftHydrationError) throw error; }
       if (!current(c)) return;
       if (view && registry.has(view)) { selected = view; ns.state.result = registry.get(view); showSnapshot(ns.state.result); ns.renderResult({ focus: false }); }
       await persist();
@@ -408,17 +492,19 @@
       if (legacy?.legacySourceReadComplete) await ns.consumeLegacyPendingRequest(c.email);
       if (!current(c)) return;
       restoring = false; ns.updatePendingUi(); void sync();
+      if (!draftHydrationError && window.location.hash === '#edit') void ns.prepareWorkspaceEdit();
     } catch (e) { if (current(c)) storageError(e); }
     return null;
-  };
+  }
+  ns.restorePendingRequest = () => { restoration = restoreWorkspace(); return restoration; };
   const saveDraft = () => {
-    if (hydrating || !restored || selected || !owner()) return writeChain;
+    if (hydrating || editPreparation || restoring || draftHydrationError || !restored || selected || !owner()) return writeChain;
     draft = captureDraft();
     const saved = persist();
     saved.catch(storageError);
     return saved;
   };
-  ns.isWorkspaceReadOnly = () => Boolean(selected);
+  ns.isWorkspaceReadOnly = () => Boolean(selected) || Boolean(hydrating) || restoring || Boolean(editPreparation) || Boolean(draftHydrationError);
   ns.getWorkspaceDraftRevision = () => draftRevision;
   ns.invalidateWorkspaceDraftOperation = () => { draftRevision++; };
   ns.saveWorkspaceDraft = () => { revision++; draftRevision++; return saveDraft(); };

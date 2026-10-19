@@ -324,3 +324,38 @@ test('final decoded total and encoded request body are rejected before runGenera
   assert.equal(h.submitted.length, 0);
   assert.match(h.ns.els.editStatus.textContent, /24MB/);
 });
+
+test('workspace editor load awaits preparation and ignores old-account entry callbacks', async () => {
+  const h = harness();
+  let finish;
+  h.ns.prepareWorkspaceEdit = () => new Promise(resolve => { finish = resolve; });
+  const pending = h.ns.loadEditImage(image(), 'stored');
+  assert.equal(h.images.length, 0);
+  h.ns.resetAccountRuntime();
+  finish(true); await pending;
+  assert.equal(h.images.length, 0);
+});
+
+test('workspace editor keeps capacity feedback and rechecks duplicate async submit after preparation', async () => {
+  const h = harness();
+  h.ns.prepareWorkspaceEdit = async () => true;
+  h.ns.workspaceSubmit = { ready: () => false, blockedReason: () => '进行中请求已达上限 3，可继续编辑草稿。' };
+  await h.ns.handleEditSubmit();
+  assert.match(h.ns.els.editStatus.textContent, /已达上限 3/);
+  assert.equal(h.submitted.length, 0);
+  h.ns.workspaceSubmit.ready = () => true;
+  h.ns.runGeneration = async settings => { h.ns.state.isBusy = true; h.submitted.push(settings); };
+  await Promise.all([h.ns.handleEditSubmit(), h.ns.handleEditSubmit()]);
+  assert.equal(h.submitted.length, 1);
+});
+
+
+test('workspace preparation locks editor text, annotation and toggle mutations', () => {
+  const h = harness();
+  h.ns.isWorkspaceEditLocked = () => true;
+  h.ns.updateEditControls();
+  for (const key of ['editPrompt', 'editAnnotationText', 'editAppendToggle']) assert.equal(h.ns.els[key].disabled, true, key);
+  h.ns.isWorkspaceEditLocked = () => false;
+  h.ns.updateEditControls();
+  for (const key of ['editPrompt', 'editAnnotationText', 'editAppendToggle']) assert.equal(h.ns.els[key].disabled, false, key);
+});

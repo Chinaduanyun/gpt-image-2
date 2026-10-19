@@ -304,7 +304,6 @@
     if (!target) return;
     if (target.dataset.copyUrl) return ns.copyImageLink(target.dataset.copyUrl);
     if (target.dataset.referenceUrl) return ns.addReferenceUrls([target.dataset.referenceUrl], '生成结果');
-    if (target.dataset.editUrl && ns.isWorkspaceReadOnly?.()) return ns.setStatus('请先返回草稿，再打开标注编辑。', 'error');
     if (target.dataset.editUrl) return ns.startEditFromUrl(target.dataset.editUrl, 'stored');
     if (target.dataset.refreshCurrent) return ns.recoverPendingGeneration();
     if (target.dataset.retryImage) {

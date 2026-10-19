@@ -181,7 +181,7 @@
     }
   };
   ns.editHasImage = () => Boolean(ns.state.edit && ns.state.edit.image && ns.state.edit.naturalWidth);
-  ns.isEditLocked = () => Boolean(ns.state.isBusy || ns.hasPendingGeneration?.()
+  ns.isEditLocked = () => Boolean(ns.state.isBusy || (ns.isWorkspaceEditLocked ? ns.isWorkspaceEditLocked() : ns.hasPendingGeneration?.())
     || ns.state.edit?.referencesLoading || ns.state.edit?.imageLoading);
   ns.captureEditContext = () => ({ edit: ns.state.edit, epoch: ns.state.accountEpoch, token: ns.state.session?.token });
   ns.isEditContextCurrent = (context) => context.edit === ns.state.edit
@@ -257,7 +257,7 @@
     ns.els.editParamsNote.textContent = parts.filter(Boolean).join(' · ');
   };
 
-  // 依据 busy/pending 锁定编辑面板控件（与主生成共用 busy 锁，禁止并发两个任务）。
+  // 读取/提交和草稿切换期间锁定控件；后台任务不阻止继续编辑草稿。
   ns.updateEditControls = () => {
     const locked = ns.isEditLocked();
     const hasImage = ns.editHasImage();
@@ -266,7 +266,7 @@
       ns.els.editSubmitBtn.textContent = ns.state.edit?.referencesLoading || ns.state.edit?.imageLoading
         ? '正在读取图片...' : (locked ? '生成任务进行中...' : '生成修改图');
     }
-    for (const key of ['editUploadBtn', 'editUploadInput', 'editChangeImageBtn', 'editModel', 'editAspectRatio', 'editResolution']) {
+    for (const key of ['editUploadBtn', 'editUploadInput', 'editChangeImageBtn', 'editModel', 'editAspectRatio', 'editResolution', 'editPrompt', 'editAnnotationText', 'editAppendToggle']) {
       if (ns.els?.[key]) ns.els[key].disabled = locked;
     }
     if (ns.els?.editUndoBtn) ns.els.editUndoBtn.disabled = locked || !ns.state.edit?.strokes?.length;
@@ -282,13 +282,23 @@
       return;
     }
     ns.gotoEditView();
-    ns.loadEditImage(url, kind);
+    return ns.loadEditImage(url, kind);
   };
   ns.gotoEditView = () => {
     try { window.location.hash = '#edit'; } catch {}
   };
 
-  ns.loadEditImage = (url, kind) => {
+  // Keep legacy standalone editor contexts synchronous; integrated entries await the
+  // workspace transition and reject callbacks belonging to a previous account.
+  ns.withEditableWorkspace = (action) => {
+    if (!ns.prepareWorkspaceEdit) return action();
+    const epoch = ns.state.accountEpoch, token = ns.state.session?.token;
+    return ns.prepareWorkspaceEdit().then(ready => {
+      if (ready && epoch === ns.state.accountEpoch && token === ns.state.session?.token) return action();
+    });
+  };
+  ns.loadEditImage = (url, kind) => ns.withEditableWorkspace(() => ns.loadPreparedEditImage(url, kind));
+  ns.loadPreparedEditImage = (url, kind) => {
     if (!ns.els?.editBaseCanvas || ns.isEditLocked()) return;
     if (ns.state.edit?.referenceImages?.length
       && !window.confirm('更换底图会清空当前标注和编辑参考图，继续吗？')) return;
@@ -334,10 +344,13 @@
 
   // 本地上传：限 image/*、≤20MB，经 FileReader 转 dataURL 载入（无污染）。
   ns.handleEditUpload = () => {
-    if (ns.isEditLocked()) return;
     const input = ns.els?.editUploadInput;
     const file = input?.files?.[0];
     if (!file) return;
+    return ns.withEditableWorkspace(() => ns.readPreparedEditUpload(input, file));
+  };
+  ns.readPreparedEditUpload = (input, file) => {
+    if (ns.isEditLocked()) return;
     if (!/^image\//.test(file.type)) {
       ns.setEditEmptyStatus('仅支持图片文件（image/*）。', 'error');
       input.value = '';
@@ -357,7 +370,7 @@
       context.edit.imageLoading = false;
       input.value = '';
       ns.updateEditControls();
-      ns.loadEditImage(String(reader.result || ''), 'upload');
+      ns.loadPreparedEditImage(String(reader.result || ''), 'upload');
     };
     reader.onerror = () => {
       if (!ns.isEditContextCurrent(context)) return;
@@ -446,7 +459,13 @@
 
   ns.handleEditSubmit = async () => {
     if (!ns.state.session?.token) return ns.setEditStatus('请先登录。', 'error');
-    if (ns.state.isBusy || ns.hasPendingGeneration()) return ns.setEditStatus('已有生成任务在进行，请等它安全结束后再提交。', 'error');
+    if (ns.state.isBusy) return ns.setEditStatus('已有请求正在提交，请稍候再提交。', 'error');
+    if (ns.prepareWorkspaceEdit) {
+      const epoch = ns.state.accountEpoch, token = ns.state.session.token;
+      if (!await ns.prepareWorkspaceEdit() || epoch !== ns.state.accountEpoch || token !== ns.state.session?.token) return;
+    } else if (ns.hasPendingGeneration()) return ns.setEditStatus('已有生成任务在进行，请等它安全结束后再提交。', 'error');
+    if (ns.state.isBusy) return ns.setEditStatus('已有请求正在提交，请稍候再提交。', 'error');
+    if (ns.workspaceSubmit && !ns.workspaceSubmit.ready()) return ns.setEditStatus(ns.workspaceSubmit.blockedReason?.() || '工作区尚未准备好，请稍候再提交。', 'error');
     if (ns.isEditLocked()) return ns.setEditStatus('图片还在读取中，请稍候再提交。', 'error');
     if (!ns.editHasImage()) return ns.setEditStatus('请先上传或选择一张图片。', 'error');
     ns.syncGlobalModelFromEdit();
@@ -485,7 +504,7 @@
     // 结果与进度显示在创作页，切过去让用户看到进度。
     ns.gotoWorkspaceView();
     ns.setStatus('正在提交标注修改任务...', 'loading');
-    ns.setEditStatus('已提交，请在「创作」页查看进度与结果。', 'ok');
+    ns.setEditStatus('正在提交，请在「创作」页查看提交状态与结果。', 'loading');
     await ns.runGeneration(settings);
   };
   ns.gotoWorkspaceView = () => {
